@@ -18,12 +18,12 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  // Initialize with 4 fresh CSPRNG keys
+  // Initialize with 4 fresh CSPRNG keys (Layer 1: 1024-bit/128-byte, Layers 2-4: 256-bit/32-byte)
   const [keys, setKeys] = useState<CascadeKeys>(() => ({
-    layer1ThreefishHex: generateRandomKey(),
-    layer2SerpentHex: generateRandomKey(),
-    layer3ChaChaHex: generateRandomKey(),
-    layer4AesHex: generateRandomKey(),
+    layer1ThreefishHex: generateRandomKey(128),
+    layer2SerpentHex: generateRandomKey(32),
+    layer3ChaChaHex: generateRandomKey(32),
+    layer4AesHex: generateRandomKey(32),
   }));
 
   const [activeTab, setActiveTab] = useState<'processor' | 'verification'>('processor');
@@ -75,8 +75,8 @@ export default function App() {
               <Layers className="w-4 h-4" />
             </div>
             <div className="text-xs">
-              <strong className="text-white block font-semibold">4-Layer Cascade</strong>
-              <span className="text-slate-400 font-mono text-[11px]">Threefish → Serpent → ChaCha → AES</span>
+              <strong className="text-white block font-semibold">1792-bit Cascade</strong>
+              <span className="text-slate-400 font-mono text-[11px]">Threefish-1024 → Serpent → ChaCha → AES</span>
             </div>
           </div>
 

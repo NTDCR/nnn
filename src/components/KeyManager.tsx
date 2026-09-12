@@ -31,10 +31,10 @@ const LAYERS_INFO: LayerMetadata[] = [
     algorithm: 'Threefish-1024',
     mode: 'CTR Mode',
     auth: 'Inner Cascade Tag',
-    keySizeBits: 256,
-    description: '1024-bit large-block ARX cipher (Skein spec) providing maximum post-quantum state diffusion.',
-    library: 'RustCrypto threefish v0.6.0 (Rust / WASM)',
-    auditStatus: 'RustCrypto Audited Spec / WASM-Compiled',
+    keySizeBits: 1024,
+    description: '1024-bit large-block ARX cipher (Skein spec) with native 1024-bit (128-byte) keying and 256-bit backward compatibility.',
+    library: 'RustCrypto threefish v0.6.0 & TypeScript Native',
+    auditStatus: 'RustCrypto Audited Spec / Verified Native 1024-bit',
   },
   {
     order: 2,
@@ -84,7 +84,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   ];
 
   const handleGenerateKey = (keyName: keyof CascadeKeys) => {
-    const newHex = generateRandomKey();
+    const newHex = keyName === 'layer1ThreefishHex' ? generateRandomKey(128) : generateRandomKey(32);
     onChangeKeys({
       ...keys,
       [keyName]: newHex,
@@ -93,10 +93,10 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
   const handleGenerateAll = () => {
     onChangeKeys({
-      layer1ThreefishHex: generateRandomKey(),
-      layer2SerpentHex: generateRandomKey(),
-      layer3ChaChaHex: generateRandomKey(),
-      layer4AesHex: generateRandomKey(),
+      layer1ThreefishHex: generateRandomKey(128),
+      layer2SerpentHex: generateRandomKey(32),
+      layer3ChaChaHex: generateRandomKey(32),
+      layer4AesHex: generateRandomKey(32),
     });
   };
 
@@ -114,6 +114,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
         createdAt: new Date().toISOString(),
         warning: 'Keep this backup strictly offline. Anyone with these keys can decrypt your files.',
         keys: {
+          layer1_threefish_1024bit: keys.layer1ThreefishHex,
           layer1_threefish_256bit: keys.layer1ThreefishHex,
           layer2_serpent_256bit: keys.layer2SerpentHex,
           layer3_chacha20_256bit: keys.layer3ChaChaHex,
@@ -161,9 +162,11 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
         const k1 = sanitize(
           source?.layer1ThreefishHex ||
+          source?.layer1_threefish_1024bit ||
           source?.layer1_threefish_256bit ||
           source?.layer1 ||
           source?.threefish ||
+          source?.threefish1024 ||
           source?.key1
         );
         const k2 = sanitize(
@@ -228,11 +231,11 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
             <h2 className="text-base font-semibold text-white flex items-center gap-2">
               4-Layer Cascade Key Management
               <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-800/60 text-indigo-300 font-mono">
-                1024-bit Combined Entropy
+                1792-bit Combined Entropy
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Each layer requires an independent 256-bit key (CSPRNG generated). No KDF overhead by default.
+              Layer 1 operates with a 1024-bit key (or 256-bit legacy key). Layers 2–4 use independent 256-bit keys (CSPRNG generated).
             </p>
           </div>
         </div>
@@ -281,7 +284,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
         <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
         <div>
           <strong className="font-semibold text-amber-300">Mandatory Security Warning:</strong> Store your keys safely. There is <em>NO recovery</em>.
-          Without all 4 independent 256-bit keys, data recovery is mathematically impossible for anyone.
+          Without all 4 keys (1024-bit Threefish + three 256-bit keys = 1792-bit combined entropy), data recovery is mathematically impossible for anyone.
         </div>
       </div>
 
@@ -291,7 +294,8 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
           const val = keys[item.key];
           const isVisible = showKey[idx];
           const layerInfo = LAYERS_INFO[idx];
-          const entropy = calculateEntropyScore(val);
+          const expectedBits = idx === 0 ? 1024 : 256;
+          const entropy = calculateEntropyScore(val, expectedBits);
 
           return (
             <div
@@ -342,7 +346,11 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
                       [item.key]: e.target.value.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, ''),
                     })
                   }
-                  placeholder="Paste or generate 64-character hex key (256 bits)..."
+                  placeholder={
+                    idx === 0
+                      ? 'Paste or generate 256-character hex key (1024 bits)... (64 hex also accepted)'
+                      : 'Paste or generate 64-character hex key (256 bits)...'
+                  }
                   disabled={disabled}
                   className="w-full rounded-lg bg-slate-900 border border-slate-700/80 px-3 py-2 pr-28 text-xs font-mono text-slate-100 placeholder-slate-600 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                   spellCheck={false}
@@ -354,7 +362,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
                     id={`generate-btn-layer-${idx + 1}`}
                     onClick={() => handleGenerateKey(item.key)}
                     disabled={disabled}
-                    title="Generate 256-bit CSPRNG key"
+                    title={idx === 0 ? 'Generate 1024-bit CSPRNG key' : 'Generate 256-bit CSPRNG key'}
                     className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-800 rounded transition"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
@@ -386,7 +394,9 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
               <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500 px-1">
                 <span>{layerInfo.description}</span>
-                <span className="font-mono">{val.length}/64 hex</span>
+                <span className="font-mono">
+                  {val.length}/{idx === 0 ? (val.length === 64 ? '64 (Legacy 256-bit)' : '256') : '64'} hex
+                </span>
               </div>
             </div>
           );

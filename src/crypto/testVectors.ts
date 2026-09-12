@@ -652,12 +652,66 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     });
   }
 
+  // 17. Native 1024-bit Key Threefish-1024 CTR Mode & Full 1792-bit Cascade Verification
+  try {
+    const t0 = performance.now();
+    // 128 bytes = 256 hex characters
+    const key1024Hex = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' +
+      '202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f' +
+      '404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f' +
+      '606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f';
+    const key1024 = hexToBytes(key1024Hex);
+
+    // Direct Threefish-1024 block cipher test with 128-byte key
+    const tweak = new Uint8Array(16);
+    const tf1024 = new Threefish1024(key1024, tweak);
+    const sampleBlock = new Uint8Array(128);
+    for (let i = 0; i < 128; i++) sampleBlock[i] = (i * 31) & 0xff;
+    const ctrBuf = new Uint8Array(sampleBlock);
+    const nonce = new Uint8Array(16).fill(0x77);
+    tf1024.processCtr(ctrBuf, nonce, 0);
+
+    const decryptedBlock = new Uint8Array(ctrBuf);
+    tf1024.processCtr(decryptedBlock, nonce, 0);
+
+    const cipherDiffers = bytesToHex(ctrBuf) !== bytesToHex(sampleBlock);
+    const roundtripPassed = bytesToHex(decryptedBlock) === bytesToHex(sampleBlock);
+
+    // Full 1792-bit cascade container roundtrip verification
+    const cascadePayload = new TextEncoder().encode('FortKnox 1792-Bit Cascade: 1024-bit Threefish + 3x256-bit Layers Native Verification');
+    const containerSim = await simulateContainerWorkflow(cascadePayload, 'ts', key1024Hex);
+
+    const allPassed = cipherDiffers && roundtripPassed && containerSim.success;
+    const t1 = performance.now();
+
+    results.push({
+      suite: 'Native 1024-Bit Key Architecture',
+      name: 'Threefish-1024 Native 1024-Bit Keying & 1792-Bit Container Roundtrip',
+      passed: allPassed,
+      expectedHex: '1024-bit key (128-byte) native ingestion and 1792-bit cascade authenticated match',
+      actualHex: allPassed
+        ? '1024-bit key (128-byte) native ingestion and 1792-bit cascade authenticated match'
+        : `Threefish roundtrip=${roundtripPassed}, Container=${containerSim.success}`,
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    results.push({
+      suite: 'Native 1024-Bit Key Architecture',
+      name: 'Threefish-1024 Native 1024-Bit Keying & 1792-Bit Container Roundtrip',
+      passed: false,
+      expectedHex: '1024-bit key native roundtrip',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
   return results;
 }
 
 async function simulateContainerWorkflow(
   fileBytes: Uint8Array,
-  engineType: 'wasm' | 'ts' = 'wasm'
+  engineType: 'wasm' | 'ts' = 'wasm',
+  k1HexOverride?: string
 ): Promise<{
   success: boolean;
   tamperCatchTail: boolean;
@@ -666,7 +720,7 @@ async function simulateContainerWorkflow(
   recoveredBytes: Uint8Array;
 }> {
   const CHUNK_SIZE = 1048576;
-  const k1Hex = '101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f';
+  const k1Hex = k1HexOverride || '101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f';
   const k2Hex = '303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f';
   const k3Hex = '505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f';
   const k4Hex = '707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f';

@@ -19,7 +19,7 @@ const WASM_PUBLIC_URL = new URL('../wasm_pkg/fortknox_cascade_crypto_bg.wasm', i
 
 export interface WasmCascadeInstance {
   isWasmAccelerated: boolean;
-  engineType: 'WASM (RustCrypto)' | 'TypeScript Fallback';
+  engineType: 'WASM (RustCrypto)' | 'TypeScript Fallback' | 'TypeScript Native (1024-bit Threefish)';
   encryptChunk(
     chunk: Uint8Array,
     index: number,
@@ -101,7 +101,9 @@ export async function createCascadeEngine(
 
   const wasmReady = await ensureWasmLoaded();
 
-  if (wasmReady) {
+  // If WASM is ready and Layer 1 key is 32 bytes (256-bit legacy), execute via WASM engine.
+  // If Layer 1 key is 128 bytes (1024-bit native), execute via native CascadePipeline.
+  if (wasmReady && k1.length === 32) {
     try {
       const wasmEngine = new WasmCascadeEngine(k1, k2, k3, k4);
 
@@ -149,12 +151,12 @@ export async function createCascadeEngine(
     }
   }
 
-  // Fallback to pure TypeScript pipeline
+  // Fallback to pure TypeScript pipeline (natively supports full 1024-bit Threefish key)
   const pipeline = new CascadePipeline(k1, k2, k3, k4);
 
   return {
     isWasmAccelerated: false,
-    engineType: 'TypeScript Fallback',
+    engineType: k1.length === 128 ? 'TypeScript Native (1024-bit Threefish)' : 'TypeScript Fallback',
     async encryptChunk(chunk, index, n1, n2, n3, n4) {
       return pipeline.encryptChunk(chunk, index, n1, n2, n3, n4);
     },

@@ -12,16 +12,29 @@ import { Aes256Gcm } from './aes256gcm.ts';
 
 export const GENERIC_DECRYPT_ERROR = 'Decryption failed. Check all keys.';
 
-export function hexToBytes(hex: string): Uint8Array {
+export function hexToBytes(hex: string, expectedBytes?: number): Uint8Array {
   if (typeof hex !== 'string') {
     throw new Error('Key must be a string.');
   }
-  const cleanHex = hex.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, '');
-  if (!/^[0-9a-fA-F]{64}$/.test(cleanHex)) {
-    throw new Error('Key must be exactly 64 hexadecimal characters (256 bits).');
+  const cleanHex = hex.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '');
+  if (!/^[0-9a-fA-F]*$/.test(cleanHex)) {
+    throw new Error('Key must contain valid hexadecimal characters.');
   }
-  const bytes = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
+
+  if (expectedBytes !== undefined) {
+    if (cleanHex.length !== expectedBytes * 2) {
+      throw new Error(`Key must be exactly ${expectedBytes * 2} hexadecimal characters (${expectedBytes * 8} bits).`);
+    }
+  } else {
+    // Allow 256 bits (64 hex), 1024 bits (256 hex), or any valid even length
+    if (cleanHex.length !== 64 && cleanHex.length !== 256 && cleanHex.length % 2 !== 0) {
+      throw new Error('Key must be either 64 hex characters (256 bits) or 256 hex characters (1024 bits).');
+    }
+  }
+
+  const byteLength = cleanHex.length / 2;
+  const bytes = new Uint8Array(byteLength);
+  for (let i = 0; i < byteLength; i++) {
     bytes[i] = parseInt(cleanHex.substring(i * 2, i * 2 + 2), 16);
   }
   return bytes;
@@ -45,24 +58,41 @@ export function fillRandomBytes(buffer: Uint8Array): void {
   }
 }
 
-export function generateRandomKey(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
+export function generateRandomKey(byteLength: number = 32): string {
+  const bytes = new Uint8Array(byteLength);
+  fillRandomBytes(bytes);
   return bytesToHex(bytes);
 }
 
-export function calculateEntropyScore(hex: string): { bits: number; label: string; color: string } {
+export function calculateEntropyScore(hex: string, expectedBits: number = 256): { bits: number; label: string; color: string } {
   if (!hex) return { bits: 0, label: 'Missing', color: 'text-rose-400' };
-  const clean = hex.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, '');
+  const clean = hex.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '');
   if (!/^[0-9a-fA-F]*$/.test(clean)) {
     return { bits: 0, label: 'Invalid hex character', color: 'text-rose-400' };
   }
-  if (clean.length < 64) {
-    const bits = Math.floor((clean.length / 64) * 256);
-    return { bits, label: `Incomplete (${clean.length}/64 hex)`, color: 'text-amber-400' };
-  }
-  if (clean.length > 64) {
-    return { bits: 256, label: `Too long (${clean.length}/64 hex)`, color: 'text-rose-400' };
+
+  const targetHexLen = expectedBits / 4; // 64 for 256 bits, 256 for 1024 bits
+
+  // If 1024-bit expected, support both full 1024-bit (256 hex) and legacy 256-bit (64 hex)
+  if (expectedBits === 1024) {
+    if (clean.length === 64) {
+      return { bits: 256, label: '256-bit Key (Auto-expanded to 1024-bit)', color: 'text-sky-400' };
+    }
+    if (clean.length < 256) {
+      const bits = Math.floor((clean.length / 256) * 1024);
+      return { bits, label: `Incomplete (${clean.length}/256 hex)`, color: 'text-amber-400' };
+    }
+    if (clean.length > 256) {
+      return { bits: 1024, label: `Too long (${clean.length}/256 hex)`, color: 'text-rose-400' };
+    }
+  } else {
+    if (clean.length < 64) {
+      const bits = Math.floor((clean.length / 64) * 256);
+      return { bits, label: `Incomplete (${clean.length}/64 hex)`, color: 'text-amber-400' };
+    }
+    if (clean.length > 64) {
+      return { bits: 256, label: `Too long (${clean.length}/64 hex)`, color: 'text-rose-400' };
+    }
   }
 
   // Calculate Shannon entropy over nibbles
@@ -77,10 +107,17 @@ export function calculateEntropyScore(hex: string): { bits: number; label: strin
   }
 
   // Max entropy for 16 hex chars is 4.0
-  const normalizedBits = Math.round((entropy / 4.0) * 256);
-  if (normalizedBits >= 240) {
-    return { bits: 256, label: 'Fort-Knox (Full 256-bit CSPRNG)', color: 'text-emerald-400' };
-  } else if (normalizedBits >= 192) {
+  const normalizedBits = Math.round((entropy / 4.0) * expectedBits);
+  const fullThreshold = expectedBits === 1024 ? 960 : 240;
+  const highThreshold = expectedBits === 1024 ? 768 : 192;
+
+  if (normalizedBits >= fullThreshold) {
+    return {
+      bits: expectedBits,
+      label: expectedBits === 1024 ? 'Fort-Knox (Full 1024-bit CSPRNG)' : 'Fort-Knox (Full 256-bit CSPRNG)',
+      color: 'text-emerald-400',
+    };
+  } else if (normalizedBits >= highThreshold) {
     return { bits: normalizedBits, label: 'High Entropy', color: 'text-blue-400' };
   } else {
     return { bits: normalizedBits, label: 'Low Entropy (Pattern detected)', color: 'text-amber-400' };

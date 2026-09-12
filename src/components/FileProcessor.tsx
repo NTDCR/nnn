@@ -101,14 +101,20 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   const sanitizeHexKey = (k: string) => k.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, '');
 
   const validateKeys = (): boolean => {
-    const hexPattern = /^[0-9a-fA-F]{64}$/;
+    const hexPattern256 = /^[0-9a-fA-F]{64}$/;
+    const hexPattern1024 = /^[0-9a-fA-F]{256}$/;
     const k1 = sanitizeHexKey(keys.layer1ThreefishHex);
     const k2 = sanitizeHexKey(keys.layer2SerpentHex);
     const k3 = sanitizeHexKey(keys.layer3ChaChaHex);
     const k4 = sanitizeHexKey(keys.layer4AesHex);
 
-    if (!hexPattern.test(k1) || !hexPattern.test(k2) || !hexPattern.test(k3) || !hexPattern.test(k4)) {
-      setError('All 4 keys must be exactly 64 hexadecimal characters (256 bits). Please generate or input valid keys.');
+    if (!hexPattern1024.test(k1) && !hexPattern256.test(k1)) {
+      setError('Layer 1 (Threefish-1024) key must be either 256 hex characters (1024 bits) or 64 hex characters (256 bits legacy).');
+      return false;
+    }
+
+    if (!hexPattern256.test(k2) || !hexPattern256.test(k3) || !hexPattern256.test(k4)) {
+      setError('Layers 2, 3, and 4 keys must be exactly 64 hexadecimal characters (256 bits). Please generate or input valid keys.');
       return false;
     }
     return true;
