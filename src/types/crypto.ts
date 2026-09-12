@@ -1,5 +1,5 @@
 export interface CascadeKeys {
-  layer1ThreefishHex: string; // 1024 bits (256 hex chars) or legacy 256 bits (64 hex chars)
+  layer1ThreefishHex: string; // Strictly 1024 bits (256 hex chars / 128 bytes)
   layer2SerpentHex: string;   // 256 bits (64 hex characters)
   layer3ChaChaHex: string;    // 256 bits (64 hex characters)
   layer4AesHex: string;       // 256 bits (64 hex characters)

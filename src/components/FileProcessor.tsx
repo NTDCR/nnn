@@ -109,8 +109,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     const k3 = sanitizeHexKey(keys.layer3ChaChaHex);
     const k4 = sanitizeHexKey(keys.layer4AesHex);
 
-    if (!hexPattern1024.test(k1) && !hexPattern256.test(k1)) {
-      setError('Layer 1 (Threefish-1024) key must be either 256 hex characters (1024 bits) or 64 hex characters (256 bits legacy).');
+    if (!hexPattern1024.test(k1)) {
+      setError('Layer 1 (Threefish-1024) key must be strictly 256 hexadecimal characters (1024 bits). Legacy 256-bit keys are not supported.');
       return false;
     }
 

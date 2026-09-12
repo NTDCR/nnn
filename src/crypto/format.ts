@@ -31,9 +31,12 @@ export function constantTimeCompare(a: Uint8Array, b: Uint8Array): boolean {
 
 /**
  * Authoritatively derives a 32-byte key for HMAC-SHA256 plaintext integrity from Layer 1 & 2 keys.
- * Dynamically accommodates both 32-byte (legacy 256-bit) and 128-byte (native 1024-bit) Layer 1 keys.
+ * Strictly enforces 128-byte (1024-bit) Layer 1 key and 32-byte (256-bit) Layer 2 key.
  */
 export function deriveHmacKey(k1: Uint8Array, k2: Uint8Array): Uint8Array {
+  if (k1.length !== 128 || k2.length !== 32) {
+    throw new Error('HMAC key derivation requires strictly a 128-byte Layer 1 key and a 32-byte Layer 2 key.');
+  }
   const label = new TextEncoder().encode('FORTKNOX_HMAC_KEY_V1');
   const combined = new Uint8Array(k1.length + k2.length + label.length);
   combined.set(k1, 0);
@@ -240,17 +243,13 @@ export async function encryptTailPointer(
 export async function decryptTailPointer(
   tail32: Uint8Array,
   key4: Uint8Array,
-  salt?: Uint8Array
+  salt: Uint8Array
 ): Promise<{ offset: number; length: number }> {
-  if (tail32.length !== 32) {
+  if (tail32.length !== 32 || !salt || salt.length !== 16) {
     throw new Error('Decryption failed. Check all keys.');
   }
 
-  const noncesToTry: Uint8Array[] = [];
-  if (salt) {
-    noncesToTry.push(await derivePointerNonce(key4, salt));
-  }
-  noncesToTry.push(await derivePointerNonce(key4)); // unsalted / legacy fallback
+  const pointerNonce = await derivePointerNonce(key4, salt);
 
   if (typeof crypto !== 'undefined' && crypto?.subtle && typeof crypto.subtle.importKey === 'function') {
     try {
@@ -262,36 +261,13 @@ export async function decryptTailPointer(
         ['decrypt']
       );
 
-      for (const nonce of noncesToTry) {
-        try {
-          const decrypted = await crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv: nonce, tagLength: 128 },
-            cryptoKey,
-            tail32
-          );
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: pointerNonce, tagLength: 128 },
+        cryptoKey,
+        tail32
+      );
 
-          const view = new DataView(decrypted);
-          const offset = Number(view.getBigUint64(0, true));
-          const length = view.getUint32(8, true);
-
-          if (length === METADATA_SIZE && offset >= 0) {
-            return { offset, length };
-          }
-        } catch {
-          // Continue to fallback nonce if available
-        }
-      }
-    } catch {
-      // Fall through to Noble Ciphers fallback
-    }
-  }
-
-  // Pure software AES-GCM fallback (Noble Ciphers)
-  for (const nonce of noncesToTry) {
-    try {
-      const cipher = gcm(key4, nonce);
-      const decrypted = cipher.decrypt(tail32);
-      const view = new DataView(decrypted.buffer, decrypted.byteOffset, decrypted.byteLength);
+      const view = new DataView(decrypted);
       const offset = Number(view.getBigUint64(0, true));
       const length = view.getUint32(8, true);
 
@@ -299,8 +275,23 @@ export async function decryptTailPointer(
         return { offset, length };
       }
     } catch {
-      // Continue to fallback nonce if available
+      // Fall through to Noble Ciphers fallback
     }
+  }
+
+  // Pure software AES-GCM fallback (Noble Ciphers)
+  try {
+    const cipher = gcm(key4, pointerNonce);
+    const decrypted = cipher.decrypt(tail32);
+    const view = new DataView(decrypted.buffer, decrypted.byteOffset, decrypted.byteLength);
+    const offset = Number(view.getBigUint64(0, true));
+    const length = view.getUint32(8, true);
+
+    if (length === METADATA_SIZE && offset >= 0) {
+      return { offset, length };
+    }
+  } catch {
+    // Constant-time generic error
   }
 
   throw new Error('Decryption failed. Check all keys.');

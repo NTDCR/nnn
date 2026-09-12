@@ -43,7 +43,7 @@ export const SpecModal: React.FC<SpecModalProps> = ({ isOpen, onClose }) => {
               <div><strong>Decryption:</strong> Container → [4] AES-256-GCM → [3] ChaCha20-Poly1305 → [2] Serpent-256 → [1] Threefish-1024 → Plaintext</div>
             </div>
             <p className="mt-2 text-xs text-slate-400">
-              Layer 1 operates with an independent 1024-bit key (or 256-bit legacy key). Layers 2–4 operate with independent 256-bit keys, delivering 1792 bits of combined CSPRNG entropy. No single algorithm flaw can compromise the data.
+              Layer 1 operates with a strictly native 1024-bit key (128 bytes). Layers 2–4 operate with independent 256-bit keys (32 bytes), delivering 1792 bits of combined CSPRNG entropy. No single algorithm flaw can compromise the data.
             </p>
           </div>
 

@@ -32,7 +32,7 @@ const LAYERS_INFO: LayerMetadata[] = [
     mode: 'CTR Mode',
     auth: 'Inner Cascade Tag',
     keySizeBits: 1024,
-    description: '1024-bit large-block ARX cipher (Skein spec) with native 1024-bit (128-byte) keying and 256-bit backward compatibility.',
+    description: '1024-bit large-block ARX cipher (Skein spec) with strictly native 1024-bit (128-byte) keying.',
     library: 'RustCrypto threefish v0.6.0 & TypeScript Native',
     auditStatus: 'RustCrypto Audited Spec / Verified Native 1024-bit',
   },
@@ -115,7 +115,6 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
         warning: 'Keep this backup strictly offline. Anyone with these keys can decrypt your files.',
         keys: {
           layer1_threefish_1024bit: keys.layer1ThreefishHex,
-          layer1_threefish_256bit: keys.layer1ThreefishHex,
           layer2_serpent_256bit: keys.layer2SerpentHex,
           layer3_chacha20_256bit: keys.layer3ChaChaHex,
           layer4_aes_256bit: keys.layer4AesHex,
@@ -163,7 +162,6 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
         const k1 = sanitize(
           source?.layer1ThreefishHex ||
           source?.layer1_threefish_1024bit ||
-          source?.layer1_threefish_256bit ||
           source?.layer1 ||
           source?.threefish ||
           source?.threefish1024 ||
@@ -235,7 +233,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Layer 1 operates with a 1024-bit key (or 256-bit legacy key). Layers 2–4 use independent 256-bit keys (CSPRNG generated).
+              Layer 1 operates with a strictly native 1024-bit key. Layers 2–4 use independent 256-bit keys (CSPRNG generated).
             </p>
           </div>
         </div>
@@ -348,7 +346,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
                   }
                   placeholder={
                     idx === 0
-                      ? 'Paste or generate 256-character hex key (1024 bits)... (64 hex also accepted)'
+                      ? 'Paste or generate 256-character hex key (1024 bits)...'
                       : 'Paste or generate 64-character hex key (256 bits)...'
                   }
                   disabled={disabled}
@@ -395,7 +393,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
               <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500 px-1">
                 <span>{layerInfo.description}</span>
                 <span className="font-mono">
-                  {val.length}/{idx === 0 ? (val.length === 64 ? '64 (Legacy 256-bit)' : '256') : '64'} hex
+                  {val.length}/{idx === 0 ? '256' : '64'} hex
                 </span>
               </div>
             </div>

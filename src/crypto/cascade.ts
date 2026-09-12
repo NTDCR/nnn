@@ -80,11 +80,8 @@ export function calculateEntropyScore(hex: string, expectedBits: number = 256): 
 
   const targetHexLen = expectedBits / 4; // 64 for 256 bits, 256 for 1024 bits
 
-  // If 1024-bit expected, support both full 1024-bit (256 hex) and legacy 256-bit (64 hex)
+  // If 1024-bit expected, strictly require full 1024-bit (256 hex)
   if (expectedBits === 1024) {
-    if (clean.length === 64) {
-      return { bits: 256, label: '256-bit Key (Auto-expanded to 1024-bit)', color: 'text-sky-400' };
-    }
     if (clean.length < 256) {
       const bits = Math.floor((clean.length / 256) * 1024);
       return { bits, label: `Incomplete (${clean.length}/256 hex)`, color: 'text-amber-400' };
@@ -143,10 +140,17 @@ export class CascadePipeline {
     key3: Uint8Array | string,
     key4: Uint8Array | string
   ) {
-    const k1 = typeof key1 === 'string' ? hexToBytes(key1) : key1;
-    const k2 = typeof key2 === 'string' ? hexToBytes(key2) : key2;
-    const k3 = typeof key3 === 'string' ? hexToBytes(key3) : key3;
-    const k4 = typeof key4 === 'string' ? hexToBytes(key4) : key4;
+    const k1 = typeof key1 === 'string' ? hexToBytes(key1, 128) : key1;
+    const k2 = typeof key2 === 'string' ? hexToBytes(key2, 32) : key2;
+    const k3 = typeof key3 === 'string' ? hexToBytes(key3, 32) : key3;
+    const k4 = typeof key4 === 'string' ? hexToBytes(key4, 32) : key4;
+
+    if (k1.length !== 128) {
+      throw new Error('Layer 1 (Threefish-1024) requires strictly a 128-byte (1024-bit) key.');
+    }
+    if (k2.length !== 32 || k3.length !== 32 || k4.length !== 32) {
+      throw new Error('Layers 2, 3, and 4 require strictly 32-byte (256-bit) keys.');
+    }
 
     const tweak = new Uint8Array([
       0x54, 0x68, 0x72, 0x65, 0x65, 0x66, 0x69, 0x73,

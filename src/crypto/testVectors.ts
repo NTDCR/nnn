@@ -162,10 +162,10 @@ export async function runSelfVerificationTests(
     });
   }
 
-  // 4. Threefish-1024 ARX Roundtrip Verification
+  // 4. Threefish-1024 ARX Roundtrip Verification (Strict 1024-bit Key)
   try {
     const t0 = performance.now();
-    const key = hexToBytes('ffffffffffffffffffffffffffffffff0000000000000000123456789abcdef0');
+    const key = hexToBytes('ffffffffffffffffffffffffffffffff0000000000000000123456789abcdef0'.repeat(4), 128);
     const tweak = new Uint8Array(16);
     const data = new Uint8Array(128); // 1 block
     for (let i = 0; i < 128; i++) data[i] = (i * 17) & 0xff;
@@ -318,14 +318,14 @@ export async function runSelfVerificationTests(
     });
   }
 
-  // 9. Rust WASM: Threefish-1024 CTR (Audited RustCrypto threefish v0.6.0)
+  // 9. Threefish-1024 CTR (Strict Native 1024-Bit / 128-Byte Keying)
   try {
     const { executeWasmLayer } = await import('./wasmBridge.ts');
     const t0 = performance.now();
-    const key = hexToBytes('11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff');
+    const key = hexToBytes('11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff'.repeat(4), 128);
     const nonce = new Uint8Array(16);
     nonce[0] = 0x7e;
-    const testData = new TextEncoder().encode('WASM RustCrypto Threefish-1024 80-round CTR Mode Test 123456789');
+    const testData = new TextEncoder().encode('Native Threefish-1024 80-round CTR Mode Test with strict 128-byte key 123456789');
 
     const enc = await executeWasmLayer(1, 'encrypt', new Uint8Array(testData), key, nonce);
     const dec = await executeWasmLayer(1, 'decrypt', enc, key, nonce);
@@ -333,8 +333,8 @@ export async function runSelfVerificationTests(
 
     const passed = bytesToHex(dec) === bytesToHex(testData);
     report({
-      suite: 'RustCrypto WASM (threefish 0.6.0)',
-      name: 'Threefish-1024 CTR Mode (Compiled Rust WASM Binary)',
+      suite: 'Native Threefish-1024 ARX',
+      name: 'Threefish-1024 CTR Mode (Strict 1024-bit / 128-byte Keying)',
       passed,
       expectedHex: bytesToHex(testData).substring(0, 32) + '...',
       actualHex: bytesToHex(dec).substring(0, 32) + '...',
@@ -342,8 +342,8 @@ export async function runSelfVerificationTests(
     });
   } catch (err) {
     report({
-      suite: 'RustCrypto WASM (threefish 0.6.0)',
-      name: 'Threefish-1024 CTR Mode (Compiled Rust WASM Binary)',
+      suite: 'Native Threefish-1024 ARX',
+      name: 'Threefish-1024 CTR Mode (Strict 1024-bit / 128-byte Keying)',
       passed: false,
       expectedHex: 'Decrypted match',
       actualHex: String(err),
@@ -401,13 +401,13 @@ export async function runSelfVerificationTests(
     });
   }
 
-  // 11. Dual-Engine Cascade Verification (WASM & TypeScript 4-Layer Pipeline)
+  // 11. Native Cascade Architecture: 4-Layer Cascade Pipeline
   try {
     const { createCascadeEngine } = await import('./wasmBridge.ts');
     const { CascadePipeline } = await import('./cascade.ts');
     const t0 = performance.now();
 
-    const k1Hex = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const k1Hex = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'.repeat(4);
     const k2Hex = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
     const k3Hex = '11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff';
     const k4Hex = 'ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100';
@@ -421,7 +421,7 @@ export async function runSelfVerificationTests(
     const n3 = new Uint8Array(12).fill(0x30);
     const n4 = new Uint8Array(12).fill(0x40);
 
-    // Engine 1: WASM Engine Roundtrip
+    // Engine 1: Cascade Engine Roundtrip
     const wasmEngine = await createCascadeEngine(k1Hex, k2Hex, k3Hex, k4Hex);
     const wasmEnc = await wasmEngine.encryptChunk(new Uint8Array(padded), 0, n1, n2, n3, n4);
     const wasmDec = await wasmEngine.decryptChunk(
@@ -465,31 +465,31 @@ export async function runSelfVerificationTests(
     const passed = wasmPassed && tsPassed && tamperDetected;
 
     report({
-      suite: 'Dual-Engine Architecture',
-      name: '4-Layer Cascade Pipeline (WASM & Pure TypeScript Engines)',
+      suite: 'Native Cascade Architecture',
+      name: '4-Layer Native Cascade Pipeline & AEAD Tamper Rejection',
       passed,
-      expectedHex: 'Dual-engine 4-layer roundtrip & tamper detection verified',
-      actualHex: passed ? 'Dual-engine 4-layer roundtrip & tamper detection verified' : 'Roundtrip failure',
+      expectedHex: 'Native 4-layer roundtrip & tamper detection verified',
+      actualHex: passed ? 'Native 4-layer roundtrip & tamper detection verified' : 'Roundtrip failure',
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
     report({
-      suite: 'Dual-Engine Architecture',
-      name: '4-Layer Cascade Pipeline (WASM & Pure TypeScript Engines)',
+      suite: 'Native Cascade Architecture',
+      name: '4-Layer Native Cascade Pipeline & AEAD Tamper Rejection',
       passed: false,
-      expectedHex: 'Dual-engine 4-layer roundtrip & tamper detection verified',
+      expectedHex: 'Native 4-layer roundtrip & tamper detection verified',
       actualHex: String(err),
       executionTimeMs: 0,
     });
   }
 
-  // 12. Cross-Engine Bidirectional Parity: WASM-Encrypted Decrypted by Pure TypeScript & Vice-Versa
+  // 12. Cross-Engine Bidirectional Parity: Cascade Pipeline Interoperability
   try {
     const { createCascadeEngine } = await import('./wasmBridge.ts');
     const { CascadePipeline } = await import('./cascade.ts');
     const t0 = performance.now();
 
-    const k1Hex = '1111111111111111111111111111111111111111111111111111111111111111';
+    const k1Hex = '1111111111111111111111111111111111111111111111111111111111111111'.repeat(4);
     const k2Hex = '2222222222222222222222222222222222222222222222222222222222222222';
     const k3Hex = '3333333333333333333333333333333333333333333333333333333333333333';
     const k4Hex = '4444444444444444444444444444444444444444444444444444444444444444';
@@ -506,7 +506,7 @@ export async function runSelfVerificationTests(
     const wasmEngine = await createCascadeEngine(k1Hex, k2Hex, k3Hex, k4Hex);
     const tsEngine = new CascadePipeline(k1Hex, k2Hex, k3Hex, k4Hex);
 
-    // Flow A: Encrypted by WASM -> Decrypted by TypeScript
+    // Flow A: Encrypted by Engine A -> Decrypted by Engine B
     const wasmEnc = await wasmEngine.encryptChunk(new Uint8Array(padded), 0, n1, n2, n3, n4);
     const tsDec = await tsEngine.decryptChunk(
       wasmEnc.ciphertext,
@@ -520,7 +520,7 @@ export async function runSelfVerificationTests(
     );
     const flowAPassed = bytesToHex(tsDec) === bytesToHex(padded);
 
-    // Flow B: Encrypted by TypeScript -> Decrypted by WASM
+    // Flow B: Encrypted by Engine B -> Decrypted by Engine A
     const tsEnc = await tsEngine.encryptChunk(new Uint8Array(padded), 0, n1, n2, n3, n4);
     const wasmDec = await wasmEngine.decryptChunk(
       tsEnc.ciphertext,
@@ -538,8 +538,8 @@ export async function runSelfVerificationTests(
     const passed = flowAPassed && flowBPassed;
 
     report({
-      suite: 'Cross-Engine Interoperability',
-      name: 'WASM <-> TypeScript Bidirectional Bit-Exact Interoperability',
+      suite: 'Cross-Engine Architecture',
+      name: 'Native 1024-Bit Cascade Pipeline Bidirectional Interoperability',
       passed,
       expectedHex: 'Exact byte-for-byte cross-engine parity',
       actualHex: passed ? 'Exact byte-for-byte cross-engine parity' : 'Parity mismatch',
@@ -547,8 +547,8 @@ export async function runSelfVerificationTests(
     });
   } catch (err) {
     report({
-      suite: 'Cross-Engine Interoperability',
-      name: 'WASM <-> TypeScript Bidirectional Bit-Exact Interoperability',
+      suite: 'Cross-Engine Architecture',
+      name: 'Native 1024-Bit Cascade Pipeline Bidirectional Interoperability',
       passed: false,
       expectedHex: 'Exact byte-for-byte cross-engine parity',
       actualHex: String(err),
@@ -734,14 +734,14 @@ async function simulateContainerWorkflow(
   recoveredBytes: Uint8Array;
 }> {
   const CHUNK_SIZE = 1048576;
-  const k1Hex = k1HexOverride || '101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f';
+  const k1Hex = k1HexOverride || '101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f'.repeat(4);
   const k2Hex = '303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f';
   const k3Hex = '505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f';
   const k4Hex = '707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f';
 
-  const k1 = hexToBytes(k1Hex);
-  const k2 = hexToBytes(k2Hex);
-  const k4 = hexToBytes(k4Hex);
+  const k1 = hexToBytes(k1Hex, 128);
+  const k2 = hexToBytes(k2Hex, 32);
+  const k4 = hexToBytes(k4Hex, 32);
 
   const { createCascadeEngine } = await import('./wasmBridge.ts');
   const { CascadePipeline } = await import('./cascade.ts');

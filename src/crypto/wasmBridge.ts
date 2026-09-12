@@ -115,69 +115,21 @@ export async function createCascadeEngine(
   k3Input: string | Uint8Array,
   k4Input: string | Uint8Array
 ): Promise<WasmCascadeInstance> {
-  const k1 = typeof k1Input === 'string' ? hexToBytes(k1Input) : k1Input;
-  const k2 = typeof k2Input === 'string' ? hexToBytes(k2Input) : k2Input;
-  const k3 = typeof k3Input === 'string' ? hexToBytes(k3Input) : k3Input;
-  const k4 = typeof k4Input === 'string' ? hexToBytes(k4Input) : k4Input;
+  const k1 = typeof k1Input === 'string' ? hexToBytes(k1Input, 128) : k1Input;
+  const k2 = typeof k2Input === 'string' ? hexToBytes(k2Input, 32) : k2Input;
+  const k3 = typeof k3Input === 'string' ? hexToBytes(k3Input, 32) : k3Input;
+  const k4 = typeof k4Input === 'string' ? hexToBytes(k4Input, 32) : k4Input;
 
-  const wasmReady = await ensureWasmLoaded();
-
-  // If WASM is ready and Layer 1 key is 32 bytes (256-bit legacy), execute via WASM engine.
-  // If Layer 1 key is 128 bytes (1024-bit native), execute via native CascadePipeline.
-  if (wasmReady && k1.length === 32) {
-    try {
-      const wasmEngine = new WasmCascadeEngine(k1, k2, k3, k4);
-
-      return {
-        isWasmAccelerated: true,
-        engineType: 'WASM (RustCrypto)',
-        async encryptChunk(chunk, index, n1, n2, n3, n4) {
-          // Copy input to mutate in-place in WASM linear memory
-          const work = new Uint8Array(chunk);
-          const tags = wasmEngine.encrypt_chunk(
-            work,
-            BigInt(index),
-            n1,
-            n2,
-            n3,
-            n4
-          );
-          return {
-            ciphertext: work,
-            tagChaCha: tags.slice(0, 16),
-            tagAes: tags.slice(16, 32),
-          };
-        },
-        async decryptChunk(chunk, index, n1, n2, n3, n4, tChaCha, tAes) {
-          try {
-            const work = new Uint8Array(chunk);
-            wasmEngine.decrypt_chunk(
-              work,
-              BigInt(index),
-              n1,
-              n2,
-              n3,
-              n4,
-              tChaCha,
-              tAes
-            );
-            return work;
-          } catch {
-            throw new Error(GENERIC_DECRYPT_ERROR);
-          }
-        },
-      };
-    } catch (e) {
-      console.warn('WasmCascadeEngine init failed, falling back:', e);
-    }
+  if (k1.length !== 128) {
+    throw new Error('Layer 1 (Threefish-1024) requires strictly a 128-byte (1024-bit) key.');
   }
 
-  // Fallback to pure TypeScript pipeline (natively supports full 1024-bit Threefish key)
+  // Pure Native Pipeline with full 1024-bit Threefish ARX cipher & 1792-bit combined entropy
   const pipeline = new CascadePipeline(k1, k2, k3, k4);
 
   return {
     isWasmAccelerated: false,
-    engineType: k1.length === 128 ? 'TypeScript Native (1024-bit Threefish)' : 'TypeScript Fallback',
+    engineType: 'TypeScript Native (1024-bit Threefish)',
     async encryptChunk(chunk, index, n1, n2, n3, n4) {
       return pipeline.encryptChunk(chunk, index, n1, n2, n3, n4);
     },
@@ -188,7 +140,7 @@ export async function createCascadeEngine(
 }
 
 /**
- * Execute standalone Threefish-1024 or Serpent-256 layer in WASM
+ * Execute standalone Threefish-1024 or Serpent-256 layer in WASM or native TS
  */
 export async function executeWasmLayer(
   layerIdx: 1 | 2 | 3 | 4,
@@ -197,8 +149,11 @@ export async function executeWasmLayer(
   key: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
-  // If Layer 1 and key is 128 bytes (native 1024-bit key), execute directly via Threefish1024
-  if (layerIdx === 1 && key.length === 128) {
+  // Layer 1 strictly requires 128 bytes (1024-bit key)
+  if (layerIdx === 1) {
+    if (key.length !== 128) {
+      throw new Error('Threefish-1024 requires strictly a 128-byte (1024-bit) key.');
+    }
     const tweak = new Uint8Array([
       0x54, 0x68, 0x72, 0x65, 0x65, 0x66, 0x69, 0x73,
       0x68, 0x54, 0x77, 0x65, 0x61, 0x6b, 0x31, 0x36
@@ -223,13 +178,7 @@ export async function executeWasmLayer(
   }
 
   // Graceful pure TypeScript fallback for layer execution
-  if (layerIdx === 1) {
-    const tweak = new Uint8Array(16);
-    const tf = new Threefish1024(key, tweak);
-    const work = new Uint8Array(data);
-    tf.processCtr(work, nonce, 0);
-    return work;
-  } else if (layerIdx === 2) {
+  if (layerIdx === 2) {
     const serpent = new Serpent256(key);
     const work = new Uint8Array(data);
     serpent.processCtr(work, nonce, 0);

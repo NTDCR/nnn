@@ -38,7 +38,7 @@ self.onmessage = async (e: MessageEvent) => {
   let k4: Uint8Array | null = null;
 
   try {
-    k1 = hexToBytes(keys.layer1ThreefishHex);
+    k1 = hexToBytes(keys.layer1ThreefishHex, 128);
     k2 = hexToBytes(keys.layer2SerpentHex, 32);
     k3 = hexToBytes(keys.layer3ChaChaHex, 32);
     k4 = hexToBytes(keys.layer4AesHex, 32);
@@ -267,7 +267,7 @@ async function processDecryption(
   const saltBuffer = await saltSlice.arrayBuffer();
   const salt16 = new Uint8Array(saltBuffer);
 
-  // 2. Decrypt tail pointer with Key 4 (salted or legacy fallback)
+  // 2. Decrypt tail pointer with Key 4 and container salt
   const { offset, length } = await decryptTailPointer(tailBytes, k4, salt16);
   if (
     offset < 0 ||
