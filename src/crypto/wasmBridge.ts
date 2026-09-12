@@ -15,8 +15,7 @@ import initWasm, {
 } from '../wasm_pkg/fortknox_cascade_crypto.js';
 import { CascadePipeline, hexToBytes, GENERIC_DECRYPT_ERROR } from './cascade.ts';
 import { Threefish1024 } from './threefish1024.ts';
-
-const WASM_PUBLIC_URL = new URL('../wasm_pkg/fortknox_cascade_crypto_bg.wasm', import.meta.url).href;
+import { Serpent256 } from './serpent256.ts';
 
 export interface WasmCascadeInstance {
   isWasmAccelerated: boolean;
@@ -59,22 +58,43 @@ async function ensureWasmLoaded(): Promise<boolean> {
           const dynamicImport = new Function('specifier', 'return import(specifier)');
           const fs = await dynamicImport('fs');
           const path = await dynamicImport('path');
-          const wasmPath = path.resolve(process.cwd(), 'src/wasm_pkg/fortknox_cascade_crypto_bg.wasm');
-          if (fs.existsSync(wasmPath)) {
-            const buffer = fs.readFileSync(wasmPath);
-            await initWasm({ module_or_path: buffer });
-            isWasmLoaded = true;
-            return true;
+          const candidates = [
+            path.resolve(process.cwd(), 'src/wasm_pkg/fortknox_cascade_crypto_bg.wasm'),
+            path.resolve(process.cwd(), 'public/fortknox_cascade_crypto_bg.wasm'),
+            path.resolve(process.cwd(), 'dist/fortknox_cascade_crypto_bg.wasm'),
+          ];
+          for (const cand of candidates) {
+            if (fs.existsSync(cand)) {
+              const buffer = fs.readFileSync(cand);
+              await initWasm({ module_or_path: buffer });
+              isWasmLoaded = true;
+              return true;
+            }
           }
         } catch {
           // Ignore in non-Node environments
         }
       }
 
-      // Browser environment: fetch WASM binary from public directory
-      await initWasm({ module_or_path: WASM_PUBLIC_URL });
-      isWasmLoaded = true;
-      return true;
+      // Browser / Worker environment:
+      // Try 1: Default Vite asset bundle resolution
+      try {
+        await initWasm();
+        isWasmLoaded = true;
+        return true;
+      } catch (bundlerErr) {
+        // Try 2: Root public directory fallback
+        try {
+          const publicUrl = new URL(/* @vite-ignore */ 'fortknox_cascade_crypto_bg.wasm', import.meta.url).href;
+          await initWasm({ module_or_path: publicUrl });
+          isWasmLoaded = true;
+          return true;
+        } catch {
+          console.warn('WASM initialization fallback to pure TypeScript:', bundlerErr);
+          isWasmLoaded = false;
+          return false;
+        }
+      }
     } catch (err) {
       console.warn('WASM initialization fallback to pure TypeScript:', err);
       isWasmLoaded = false;
@@ -189,11 +209,33 @@ export async function executeWasmLayer(
     return work;
   }
 
-  await ensureWasmLoaded();
-  if (mode === 'encrypt') {
-    return wasmEncryptLayer(layerIdx, data, key, nonce);
+  const loaded = await ensureWasmLoaded();
+  if (loaded) {
+    try {
+      if (mode === 'encrypt') {
+        return wasmEncryptLayer(layerIdx, data, key, nonce);
+      } else {
+        return wasmDecryptLayer(layerIdx, data, key, nonce);
+      }
+    } catch (wasmErr) {
+      console.warn('WASM execution failed, falling back to TypeScript:', wasmErr);
+    }
+  }
+
+  // Graceful pure TypeScript fallback for layer execution
+  if (layerIdx === 1) {
+    const tweak = new Uint8Array(16);
+    const tf = new Threefish1024(key, tweak);
+    const work = new Uint8Array(data);
+    tf.processCtr(work, nonce, 0);
+    return work;
+  } else if (layerIdx === 2) {
+    const serpent = new Serpent256(key);
+    const work = new Uint8Array(data);
+    serpent.processCtr(work, nonce, 0);
+    return work;
   } else {
-    return wasmDecryptLayer(layerIdx, data, key, nonce);
+    throw new Error(`Layer ${layerIdx} fallback not implemented`);
   }
 }
 

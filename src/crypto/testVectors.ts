@@ -774,10 +774,7 @@ async function simulateContainerWorkflow(
 
   const hmacIntegrity = hmacHasher.digest();
 
-  const orderHash = new Uint8Array(await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(CASCADE_ORDER_TAG_STRING)
-  ));
+  const orderHash = sha256(new TextEncoder().encode(CASCADE_ORDER_TAG_STRING));
 
   const metadata = encodeMetadataBlob({
     magic: 0x464B4E31,

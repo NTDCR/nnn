@@ -4,8 +4,10 @@
  * Provides Galois/Counter Mode authentication tag
  */
 
+import { gcm } from '@noble/ciphers/aes.js';
+
 export class Aes256Gcm {
-  private cryptoKeyPromise: Promise<CryptoKey>;
+  private cryptoKeyPromise: Promise<CryptoKey> | null = null;
   private rawKey: Uint8Array;
 
   constructor(keyBytes: Uint8Array) {
@@ -13,13 +15,15 @@ export class Aes256Gcm {
       throw new Error('AES-256-GCM key must be 32 bytes');
     }
     this.rawKey = new Uint8Array(keyBytes);
-    this.cryptoKeyPromise = crypto.subtle.importKey(
-      'raw',
-      this.rawKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
+    if (typeof crypto !== 'undefined' && crypto?.subtle && typeof crypto.subtle.importKey === 'function') {
+      this.cryptoKeyPromise = crypto.subtle.importKey(
+        'raw',
+        this.rawKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      ).catch(() => null);
+    }
   }
 
   public deriveChunkNonce(baseNonce: Uint8Array, chunkIndex: number): Uint8Array {
@@ -37,10 +41,11 @@ export class Aes256Gcm {
 
   public destroy(): void {
     this.rawKey.fill(0);
+    this.cryptoKeyPromise = null;
   }
 
   /**
-   * Encrypt data using Web Crypto AES-GCM
+   * Encrypt data using Web Crypto AES-GCM or Noble fallback
    * Returns ciphertext and 16-byte tag
    */
   public async encrypt(
@@ -48,28 +53,44 @@ export class Aes256Gcm {
     nonce12: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<{ ciphertext: Uint8Array; tag: Uint8Array }> {
-    const key = await this.cryptoKeyPromise;
-    const cipherBuffer = await crypto.subtle.encrypt(
-      {
-        name: 'AES-GCM',
-        iv: nonce12,
-        additionalData: aad,
-        tagLength: 128,
-      },
-      key,
-      data
-    );
+    if (this.cryptoKeyPromise) {
+      try {
+        const key = await this.cryptoKeyPromise;
+        if (key && typeof crypto !== 'undefined' && crypto?.subtle) {
+          const cipherBuffer = await crypto.subtle.encrypt(
+            {
+              name: 'AES-GCM',
+              iv: nonce12,
+              additionalData: aad,
+              tagLength: 128,
+            },
+            key,
+            data
+          );
+          const result = new Uint8Array(cipherBuffer);
+          const splitPoint = result.length - 16;
+          return {
+            ciphertext: new Uint8Array(result.subarray(0, splitPoint)),
+            tag: new Uint8Array(result.subarray(splitPoint)),
+          };
+        }
+      } catch {
+        // Fall through to Noble Ciphers fallback
+      }
+    }
 
-    const result = new Uint8Array(cipherBuffer);
-    const splitPoint = result.length - 16;
-    const ciphertext = result.subarray(0, splitPoint);
-    const tag = result.subarray(splitPoint);
-
-    return { ciphertext: new Uint8Array(ciphertext), tag: new Uint8Array(tag) };
+    // Pure software AES-GCM fallback (Noble Ciphers)
+    const cipher = gcm(this.rawKey, nonce12, aad);
+    const ctWithTag = cipher.encrypt(data);
+    const splitPoint = ctWithTag.length - 16;
+    return {
+      ciphertext: new Uint8Array(ctWithTag.subarray(0, splitPoint)),
+      tag: new Uint8Array(ctWithTag.subarray(splitPoint)),
+    };
   }
 
   /**
-   * Decrypt data using Web Crypto AES-GCM
+   * Decrypt data using Web Crypto AES-GCM or Noble fallback
    * Verifies tag in constant time
    */
   public async decrypt(
@@ -78,25 +99,35 @@ export class Aes256Gcm {
     tag16: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<Uint8Array> {
-    const key = await this.cryptoKeyPromise;
-
-    // Concatenate ciphertext and tag for WebCrypto decrypt
     const fullCipher = new Uint8Array(ciphertext.length + 16);
     fullCipher.set(ciphertext, 0);
     fullCipher.set(tag16, ciphertext.length);
 
+    if (this.cryptoKeyPromise) {
+      try {
+        const key = await this.cryptoKeyPromise;
+        if (key && typeof crypto !== 'undefined' && crypto?.subtle) {
+          const plainBuffer = await crypto.subtle.decrypt(
+            {
+              name: 'AES-GCM',
+              iv: nonce12,
+              additionalData: aad,
+              tagLength: 128,
+            },
+            key,
+            fullCipher
+          );
+          return new Uint8Array(plainBuffer);
+        }
+      } catch {
+        // Fall through to Noble Ciphers fallback
+      }
+    }
+
+    // Pure software AES-GCM fallback (Noble Ciphers)
     try {
-      const plainBuffer = await crypto.subtle.decrypt(
-        {
-          name: 'AES-GCM',
-          iv: nonce12,
-          additionalData: aad,
-          tagLength: 128,
-        },
-        key,
-        fullCipher
-      );
-      return new Uint8Array(plainBuffer);
+      const cipher = gcm(this.rawKey, nonce12, aad);
+      return cipher.decrypt(fullCipher);
     } catch {
       throw new Error('Decryption failed. Check all keys.');
     }

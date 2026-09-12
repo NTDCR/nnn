@@ -178,11 +178,8 @@ async function processEncryption(
   // Generate authentic plaintext integrity tag
   const hmacIntegrity = hmacHasher.digest();
 
-  const orderConfirm = new Uint8Array(32);
-  // Layer order hash
   const orderEncoder = new TextEncoder().encode(CASCADE_ORDER_TAG_STRING);
-  const orderHash = await crypto.subtle.digest('SHA-256', orderEncoder);
-  orderConfirm.set(new Uint8Array(orderHash));
+  const orderConfirm = sha256(orderEncoder);
 
   // Build 512-byte metadata blob
   const metadata = encodeMetadataBlob({
@@ -290,10 +287,7 @@ async function processDecryption(
   const metadata = decodeMetadataBlob(unmasked);
 
   // Adversarial integrity check: verify cascade order confirmation tag with constantTimeCompare
-  const expectedOrderHash = new Uint8Array(await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(CASCADE_ORDER_TAG_STRING)
-  ));
+  const expectedOrderHash = sha256(new TextEncoder().encode(CASCADE_ORDER_TAG_STRING));
   if (!constantTimeCompare(metadata.orderConfirm, expectedOrderHash)) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }

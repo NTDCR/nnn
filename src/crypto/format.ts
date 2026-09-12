@@ -8,6 +8,7 @@
 
 import { sha256 } from '@noble/hashes/sha2.js';
 import { chacha20 } from '@noble/ciphers/chacha.js';
+import { gcm } from '@noble/ciphers/aes.js';
 import { ContainerMetadata } from '../types/crypto.ts';
 import { fillRandomBytes } from './cascade.ts';
 
@@ -202,25 +203,35 @@ export async function encryptTailPointer(
   view.setBigUint64(0, BigInt(offset), true);
   view.setUint32(8, length, true);
   // Padding with random bytes
-  crypto.getRandomValues(pointerData.subarray(12, 16));
+  fillRandomBytes(pointerData.subarray(12, 16));
 
   const pointerNonce = await derivePointerNonce(key4, salt);
 
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    key4,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt']
-  );
+  if (typeof crypto !== 'undefined' && crypto?.subtle && typeof crypto.subtle.importKey === 'function') {
+    try {
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        key4,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt']
+      );
 
-  const cipher = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: pointerNonce, tagLength: 128 },
-    cryptoKey,
-    pointerData
-  );
+      const cipher = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: pointerNonce, tagLength: 128 },
+        cryptoKey,
+        pointerData
+      );
 
-  return new Uint8Array(cipher); // Exactly 32 bytes (16B cipher + 16B tag)
+      return new Uint8Array(cipher); // Exactly 32 bytes (16B cipher + 16B tag)
+    } catch {
+      // Fall through to Noble Ciphers fallback
+    }
+  }
+
+  // Pure software AES-GCM fallback (Noble Ciphers)
+  const cipher = gcm(key4, pointerNonce);
+  return cipher.encrypt(pointerData);
 }
 
 /**
@@ -235,43 +246,62 @@ export async function decryptTailPointer(
     throw new Error('Decryption failed. Check all keys.');
   }
 
-  try {
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      key4,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['decrypt']
-    );
-
-    const noncesToTry: Uint8Array[] = [];
-    if (salt) {
-      noncesToTry.push(await derivePointerNonce(key4, salt));
-    }
-    noncesToTry.push(await derivePointerNonce(key4)); // unsalted / legacy fallback
-
-    for (const nonce of noncesToTry) {
-      try {
-        const decrypted = await crypto.subtle.decrypt(
-          { name: 'AES-GCM', iv: nonce, tagLength: 128 },
-          cryptoKey,
-          tail32
-        );
-
-        const view = new DataView(decrypted);
-        const offset = Number(view.getBigUint64(0, true));
-        const length = view.getUint32(8, true);
-
-        if (length === METADATA_SIZE && offset >= 0) {
-          return { offset, length };
-        }
-      } catch {
-        // Continue to fallback nonce if available
-      }
-    }
-
-    throw new Error('Decryption failed. Check all keys.');
-  } catch {
-    throw new Error('Decryption failed. Check all keys.');
+  const noncesToTry: Uint8Array[] = [];
+  if (salt) {
+    noncesToTry.push(await derivePointerNonce(key4, salt));
   }
+  noncesToTry.push(await derivePointerNonce(key4)); // unsalted / legacy fallback
+
+  if (typeof crypto !== 'undefined' && crypto?.subtle && typeof crypto.subtle.importKey === 'function') {
+    try {
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        key4,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt']
+      );
+
+      for (const nonce of noncesToTry) {
+        try {
+          const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: nonce, tagLength: 128 },
+            cryptoKey,
+            tail32
+          );
+
+          const view = new DataView(decrypted);
+          const offset = Number(view.getBigUint64(0, true));
+          const length = view.getUint32(8, true);
+
+          if (length === METADATA_SIZE && offset >= 0) {
+            return { offset, length };
+          }
+        } catch {
+          // Continue to fallback nonce if available
+        }
+      }
+    } catch {
+      // Fall through to Noble Ciphers fallback
+    }
+  }
+
+  // Pure software AES-GCM fallback (Noble Ciphers)
+  for (const nonce of noncesToTry) {
+    try {
+      const cipher = gcm(key4, nonce);
+      const decrypted = cipher.decrypt(tail32);
+      const view = new DataView(decrypted.buffer, decrypted.byteOffset, decrypted.byteLength);
+      const offset = Number(view.getBigUint64(0, true));
+      const length = view.getUint32(8, true);
+
+      if (length === METADATA_SIZE && offset >= 0) {
+        return { offset, length };
+      }
+    } catch {
+      // Continue to fallback nonce if available
+    }
+  }
+
+  throw new Error('Decryption failed. Check all keys.');
 }
