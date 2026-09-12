@@ -57,11 +57,12 @@ self.onmessage = async (e: MessageEvent) => {
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : GENERIC_DECRYPT_ERROR;
+    const isEncrypt = action === 'ENCRYPT';
     self.postMessage({
       type: 'ERROR',
-      error: message.includes('key') || message.includes('Decryption')
-        ? GENERIC_DECRYPT_ERROR
-        : message,
+      error: isEncrypt
+        ? (message.includes('Key') || message.includes('key') ? message : 'Encryption failed. Check all keys.')
+        : (message.includes('key') || message.includes('Decryption') ? GENERIC_DECRYPT_ERROR : message),
     });
   } finally {
     // Comprehensive ephemeral key hygiene

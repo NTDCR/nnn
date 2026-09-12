@@ -96,6 +96,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       setError(null);
       clearDownloadUrl();
     }
+    e.target.value = '';
   };
 
   const sanitizeHexKey = (k: string) => k.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, '');
@@ -171,11 +172,23 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
 
     setIsProcessing(true);
 
-    // Instantiate Web Worker
-    const worker = new Worker(new URL('../workers/cascadeWorker.ts', import.meta.url), {
-      type: 'module',
-    });
-    workerRef.current = worker;
+    // Instantiate Web Worker safely
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('../workers/cascadeWorker.ts', import.meta.url), {
+        type: 'module',
+      });
+      workerRef.current = worker;
+    } catch (workerErr) {
+      console.error('Failed to instantiate cascade worker:', workerErr);
+      setIsProcessing(false);
+      setError('Failed to start cryptographic worker thread. Check browser Web Worker support.');
+      if (writableStreamRef.current) {
+        writableStreamRef.current.abort().catch(() => {});
+        writableStreamRef.current = null;
+      }
+      return;
+    }
 
     // Sequential write queue to eliminate FileSystemWritableFileStream concurrent write collisions
     let writeQueue: Promise<void> = Promise.resolve();
@@ -281,8 +294,16 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       console.error('Worker error:', wErr);
       setIsProcessing(false);
       setProgress(null);
-      setError('Decryption failed. Check all keys.');
+      setError(action === 'ENCRYPT' ? 'Encryption failed during cascade execution.' : 'Decryption failed. Check all keys.');
       chunksCollectorRef.current = [];
+      if (writableStreamRef.current) {
+        try {
+          writableStreamRef.current.abort().catch(() => {});
+        } catch {
+          // Ignore abort error
+        }
+        writableStreamRef.current = null;
+      }
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
