@@ -1,0 +1,6 @@
+{
+  "name": "Fort-Knox Cascade File Encryption PWA",
+  "description": "Production-grade 4-layer cascade file encryption PWA with independent per-layer keys, zero-RAM streaming to disk, and compact antiforensic container format.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
