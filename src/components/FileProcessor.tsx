@@ -43,6 +43,25 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     };
   }, [downloadBlobUrl]);
 
+  // Comprehensive unmount cleanup for active worker and open file streams
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+      if (writableStreamRef.current) {
+        try {
+          writableStreamRef.current.abort().catch(() => {});
+        } catch {
+          // Ignore abort errors on unmount
+        }
+        writableStreamRef.current = null;
+      }
+      chunksCollectorRef.current = [];
+    };
+  }, []);
+
   const clearDownloadUrl = () => {
     setDownloadBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -115,11 +134,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     writableStreamRef.current = null;
 
     // Direct disk streaming setup
-    let targetFileName = action === 'ENCRYPT'
-      ? `${selectedFile.name}.fortknox`
-      : selectedFile.name.endsWith('.fortknox')
-        ? selectedFile.name.slice(0, -9)
-        : `decrypted_${selectedFile.name}`;
+    let targetFileName: string;
+    if (action === 'ENCRYPT') {
+      targetFileName = `${selectedFile.name}.fortknox`;
+    } else {
+      const stripped = selectedFile.name.replace(/\.fortknox$/i, '');
+      targetFileName = stripped.length > 0 ? stripped : `decrypted_${selectedFile.name}`;
+    }
 
     if (hasFileSystemAccess && useDirectDiskWrite) {
       try {
@@ -134,7 +155,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
         setStreamedDirectToDisk(true);
       } catch (pickerErr: unknown) {
         // If user cancelled picker dialog
-        if (pickerErr instanceof Error && pickerErr.name === 'AbortError') {
+        if ((pickerErr as { name?: string })?.name === 'AbortError') {
           return;
         }
         console.warn('Falling back to memory stream:', pickerErr);
@@ -152,29 +173,52 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
 
     // Sequential write queue to eliminate FileSystemWritableFileStream concurrent write collisions
     let writeQueue: Promise<void> = Promise.resolve();
+    let diskWriteError: Error | null = null;
 
     worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
       const data = e.data;
 
       if (data.type === 'CHUNK_OUTPUT') {
         const chunkData = new Uint8Array(data.data);
-        if (writableStreamRef.current) {
+        if (writableStreamRef.current && !diskWriteError) {
           // Zero-RAM streaming: serialize writes sequentially to disk
           writeQueue = writeQueue.then(async () => {
-            if (writableStreamRef.current) {
+            if (writableStreamRef.current && chunkData.length > 0) {
               await writableStreamRef.current.write(chunkData);
             }
           }).catch((wErr) => {
             console.error('Disk write stream error:', wErr);
+            const errObj = wErr instanceof Error ? wErr : new Error(String(wErr));
+            diskWriteError = errObj;
+            if (workerRef.current) {
+              workerRef.current.terminate();
+              workerRef.current = null;
+            }
+            if (writableStreamRef.current) {
+              try {
+                writableStreamRef.current.abort().catch(() => {});
+              } catch {
+                // Ignore abort error
+              }
+              writableStreamRef.current = null;
+            }
+            chunksCollectorRef.current = [];
+            setIsProcessing(false);
+            setProgress(null);
+            setError(`Disk write failure: ${errObj.message || 'Unable to complete write operation'}`);
           });
-        } else {
+        } else if (!writableStreamRef.current && !diskWriteError) {
           // Fallback in-memory collection
           chunksCollectorRef.current.push(chunkData);
         }
       } else if (data.type === 'PROGRESS') {
-        setProgress(data as WorkerProgressMessage);
+        if (!diskWriteError) {
+          setProgress(data as WorkerProgressMessage);
+        }
       } else if (data.type === 'SUCCESS') {
         writeQueue.then(async () => {
+          if (diskWriteError) return;
+
           setIsProcessing(false);
           setProgress(null);
 

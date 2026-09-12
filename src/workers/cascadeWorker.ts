@@ -414,10 +414,9 @@ async function processDecryption(
   const totalTimeMs = performance.now() - startTime;
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);
 
-  // Restore original filename by stripping .fortknox
-  const restoredName = file.name.endsWith('.fortknox')
-    ? file.name.slice(0, -9)
-    : `decrypted_${file.name}`;
+  // Restore original filename by stripping .fortknox (case-insensitive)
+  const strippedName = file.name.replace(/\.fortknox$/i, '');
+  const restoredName = strippedName.length > 0 ? strippedName : 'decrypted_file';
 
   self.postMessage({
     type: 'SUCCESS',

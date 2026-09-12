@@ -139,20 +139,18 @@ export default function App() {
           </button>
         </div>
 
-        {/* Tab Content */}
-        {activeTab === 'processor' ? (
-          <div className="space-y-6">
-            {/* Key Manager Component */}
-            <KeyManager keys={keys} onChangeKeys={setKeys} />
+        {/* Tab Content - rendered with CSS visibility to prevent unmounting active file streams */}
+        <div className={activeTab === 'processor' ? 'space-y-6' : 'hidden'}>
+          {/* Key Manager Component */}
+          <KeyManager keys={keys} onChangeKeys={setKeys} />
 
-            {/* File Processor Component */}
-            <FileProcessor keys={keys} />
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <VerificationPanel />
-          </div>
-        )}
+          {/* File Processor Component */}
+          <FileProcessor keys={keys} />
+        </div>
+
+        <div className={activeTab === 'verification' ? 'space-y-6' : 'hidden'}>
+          <VerificationPanel />
+        </div>
       </main>
 
       {/* Footer */}

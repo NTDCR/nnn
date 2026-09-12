@@ -147,19 +147,48 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
+    reader.onerror = () => {
+      alert('Failed to read key file from disk.');
+    };
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
         const source = (parsed && typeof parsed === 'object' && parsed.keys) ? parsed.keys : parsed;
         const sanitize = (val: unknown) =>
           typeof val === 'string'
-            ? val.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, '')
+            ? val.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '')
             : '';
 
-        const k1 = sanitize(source?.layer1ThreefishHex || source?.layer1_threefish_256bit);
-        const k2 = sanitize(source?.layer2SerpentHex || source?.layer2_serpent_256bit);
-        const k3 = sanitize(source?.layer3ChaChaHex || source?.layer3_chacha20_256bit);
-        const k4 = sanitize(source?.layer4AesHex || source?.layer4_aes_256bit);
+        const k1 = sanitize(
+          source?.layer1ThreefishHex ||
+          source?.layer1_threefish_256bit ||
+          source?.layer1 ||
+          source?.threefish ||
+          source?.key1
+        );
+        const k2 = sanitize(
+          source?.layer2SerpentHex ||
+          source?.layer2_serpent_256bit ||
+          source?.layer2 ||
+          source?.serpent ||
+          source?.key2
+        );
+        const k3 = sanitize(
+          source?.layer3ChaChaHex ||
+          source?.layer3_chacha20_256bit ||
+          source?.layer3 ||
+          source?.chacha ||
+          source?.chacha20 ||
+          source?.key3
+        );
+        const k4 = sanitize(
+          source?.layer4AesHex ||
+          source?.layer4_aes_256bit ||
+          source?.layer4 ||
+          source?.aes ||
+          source?.aes256 ||
+          source?.key4
+        );
 
         if (k1 || k2 || k3 || k4) {
           onChangeKeys({
@@ -172,7 +201,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
           alert('No recognizable 4-layer cascade keys found in the imported JSON.');
         }
       } catch {
-        alert('Invalid keys JSON file format');
+        alert('Invalid keys JSON file format.');
       }
     };
     reader.readAsText(file);
@@ -310,7 +339,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
                   onChange={(e) =>
                     onChangeKeys({
                       ...keys,
-                      [item.key]: e.target.value.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, ''),
+                      [item.key]: e.target.value.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, ''),
                     })
                   }
                   placeholder="Paste or generate 64-character hex key (256 bits)..."

@@ -142,7 +142,8 @@ export class Threefish1024 {
     for (let offset = 0; offset < data.length; offset += BLOCK_SIZE) {
       blockBuffer.fill(0);
       blockBuffer.set(baseNonce.subarray(0, 16), 0);
-      view.setBigUint64(16, counter, true);
+      view.setBigUint64(16, counter & 0xFFFFFFFFFFFFFFFFn, true);
+      view.setBigUint64(24, (counter >> 64n) & 0xFFFFFFFFFFFFFFFFn, true);
 
       this.encryptBlock(blockBuffer);
 
