@@ -1,0 +1,20 @@
+{
+  "name": "fortknox-cascade-crypto",
+  "type": "module",
+  "collaborators": [
+    "Fort-Knox Cryptography Engineering Team"
+  ],
+  "description": "High-throughput 4-layer cascade file encryption (Threefish-1024, Serpent-256, ChaCha20-Poly1305, AES-256-GCM) with zero-RAM streaming for WebAssembly",
+  "version": "1.0.0",
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    "fortknox_cascade_crypto_bg.wasm",
+    "fortknox_cascade_crypto.js",
+    "fortknox_cascade_crypto.d.ts"
+  ],
+  "main": "fortknox_cascade_crypto.js",
+  "types": "fortknox_cascade_crypto.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
