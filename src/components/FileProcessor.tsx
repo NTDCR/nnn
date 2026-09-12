@@ -150,14 +150,23 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     });
     workerRef.current = worker;
 
-    worker.onmessage = async (e: MessageEvent<WorkerMessage>) => {
+    // Sequential write queue to eliminate FileSystemWritableFileStream concurrent write collisions
+    let writeQueue: Promise<void> = Promise.resolve();
+
+    worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
       const data = e.data;
 
       if (data.type === 'CHUNK_OUTPUT') {
         const chunkData = new Uint8Array(data.data);
         if (writableStreamRef.current) {
-          // Zero-RAM streaming: write immediately to disk
-          await writableStreamRef.current.write(chunkData);
+          // Zero-RAM streaming: serialize writes sequentially to disk
+          writeQueue = writeQueue.then(async () => {
+            if (writableStreamRef.current) {
+              await writableStreamRef.current.write(chunkData);
+            }
+          }).catch((wErr) => {
+            console.error('Disk write stream error:', wErr);
+          });
         } else {
           // Fallback in-memory collection
           chunksCollectorRef.current.push(chunkData);
@@ -165,44 +174,56 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       } else if (data.type === 'PROGRESS') {
         setProgress(data as WorkerProgressMessage);
       } else if (data.type === 'SUCCESS') {
-        setIsProcessing(false);
-        setProgress(null);
+        writeQueue.then(async () => {
+          setIsProcessing(false);
+          setProgress(null);
 
-        // Close writable file stream if open
-        if (writableStreamRef.current) {
-          await writableStreamRef.current.close();
-          writableStreamRef.current = null;
-        } else {
-          // Create download blob
-          const blob = new Blob(chunksCollectorRef.current as BlobPart[], {
-            type: 'application/octet-stream',
-          });
-          const url = URL.createObjectURL(blob);
-          setDownloadBlobUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return url;
-          });
-        }
+          // Close writable file stream strictly after all writes resolve
+          if (writableStreamRef.current) {
+            await writableStreamRef.current.close();
+            writableStreamRef.current = null;
+          } else {
+            // Create download blob
+            const blob = new Blob(chunksCollectorRef.current as BlobPart[], {
+              type: 'application/octet-stream',
+            });
+            const url = URL.createObjectURL(blob);
+            setDownloadBlobUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return url;
+            });
+            chunksCollectorRef.current = [];
+          }
 
-        setResult(data as WorkerSuccessMessage);
-        worker.terminate();
-        workerRef.current = null;
+          setResult(data as WorkerSuccessMessage);
+          if (workerRef.current) {
+            workerRef.current.terminate();
+            workerRef.current = null;
+          }
+        }).catch((err) => {
+          console.error('Stream finalization error:', err);
+          setIsProcessing(false);
+          setError('Failed to finalize output stream.');
+        });
       } else if (data.type === 'ERROR') {
         setIsProcessing(false);
         setProgress(null);
         setError(data.error || 'Decryption failed. Check all keys.');
+        chunksCollectorRef.current = [];
 
         if (writableStreamRef.current) {
           try {
-            await writableStreamRef.current.abort();
+            writableStreamRef.current.abort().catch(() => {});
           } catch {
             // Ignore stream abort errors
           }
           writableStreamRef.current = null;
         }
 
-        worker.terminate();
-        workerRef.current = null;
+        if (workerRef.current) {
+          workerRef.current.terminate();
+          workerRef.current = null;
+        }
       }
     };
 
@@ -211,8 +232,11 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       setIsProcessing(false);
       setProgress(null);
       setError('Decryption failed. Check all keys.');
-      worker.terminate();
-      workerRef.current = null;
+      chunksCollectorRef.current = [];
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
     };
 
     // Dispatch job to worker
@@ -237,6 +261,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       writableStreamRef.current.abort().catch(() => {});
       writableStreamRef.current = null;
     }
+    chunksCollectorRef.current = [];
+    clearDownloadUrl();
     setIsProcessing(false);
     setProgress(null);
     setError('Operation cancelled by user.');

@@ -32,29 +32,40 @@ export function constantTimeCompare(a: Uint8Array, b: Uint8Array): boolean {
  * Derives a 32-byte subkey for metadata masking using SHA-256 (via @noble/hashes)
  */
 async function deriveMetadataKey(key4: Uint8Array): Promise<Uint8Array> {
-  const combined = new Uint8Array(key4.length + 20);
+  const label = new TextEncoder().encode('FORTKNOX_METADATA_V1');
+  const combined = new Uint8Array(key4.length + label.length);
   combined.set(key4, 0);
-  combined.set(new TextEncoder().encode('FORTKNOX_METADATA_V1'), key4.length);
+  combined.set(label, key4.length);
   return sha256(combined);
 }
 
 /**
- * Derives a deterministic 12-byte nonce from Key 4 for the tail pointer (via @noble/hashes)
+ * Derives a 12-byte nonce from Key 4 with optional container salt for the tail pointer
  */
-async function derivePointerNonce(key4: Uint8Array): Promise<Uint8Array> {
-  const combined = new Uint8Array(key4.length + 25);
+export async function derivePointerNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
+  const label = new TextEncoder().encode('FORTKNOX_POINTER_NONCE_V1');
+  const saltLen = salt ? salt.length : 0;
+  const combined = new Uint8Array(key4.length + label.length + saltLen);
   combined.set(key4, 0);
-  combined.set(new TextEncoder().encode('FORTKNOX_POINTER_NONCE_V1'), key4.length);
+  combined.set(label, key4.length);
+  if (salt) {
+    combined.set(salt, key4.length + label.length);
+  }
   return sha256(combined).subarray(0, 12);
 }
 
 /**
- * Derives a deterministic 12-byte nonce from Key 4 for metadata masking (via @noble/hashes)
+ * Derives a 12-byte nonce from Key 4 with optional container salt for metadata masking
  */
-async function deriveMetadataNonce(key4: Uint8Array): Promise<Uint8Array> {
-  const combined = new Uint8Array(key4.length + 26);
+export async function deriveMetadataNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
+  const label = new TextEncoder().encode('FORTKNOX_METADATA_NONCE_V1');
+  const saltLen = salt ? salt.length : 0;
+  const combined = new Uint8Array(key4.length + label.length + saltLen);
   combined.set(key4, 0);
-  combined.set(new TextEncoder().encode('FORTKNOX_METADATA_NONCE_V1'), key4.length);
+  combined.set(label, key4.length);
+  if (salt) {
+    combined.set(salt, key4.length + label.length);
+  }
   return sha256(combined).subarray(0, 12);
 }
 
@@ -149,10 +160,17 @@ export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
 export async function maskMetadataBlob(
   metaBlob: Uint8Array,
   key4: Uint8Array,
-  explicitNonce?: Uint8Array
+  explicitNonceOrSalt?: Uint8Array
 ): Promise<Uint8Array> {
   const metaKey = await deriveMetadataKey(key4);
-  const nonce12 = explicitNonce || (await deriveMetadataNonce(key4));
+  let nonce12: Uint8Array;
+  if (explicitNonceOrSalt && explicitNonceOrSalt.length === 12) {
+    nonce12 = explicitNonceOrSalt;
+  } else if (explicitNonceOrSalt) {
+    nonce12 = await deriveMetadataNonce(key4, explicitNonceOrSalt);
+  } else {
+    nonce12 = await deriveMetadataNonce(key4);
+  }
   return chacha20(metaKey, nonce12, metaBlob, undefined, 1);
 }
 
@@ -163,7 +181,8 @@ export async function maskMetadataBlob(
 export async function encryptTailPointer(
   offset: number,
   length: number,
-  key4: Uint8Array
+  key4: Uint8Array,
+  salt?: Uint8Array
 ): Promise<Uint8Array> {
   const pointerData = new Uint8Array(16);
   const view = new DataView(pointerData.buffer, pointerData.byteOffset, pointerData.byteLength);
@@ -172,7 +191,7 @@ export async function encryptTailPointer(
   // Padding with random bytes
   crypto.getRandomValues(pointerData.subarray(12, 16));
 
-  const pointerNonce = await derivePointerNonce(key4);
+  const pointerNonce = await derivePointerNonce(key4, salt);
 
   const cryptoKey = await crypto.subtle.importKey(
     'raw',
@@ -192,17 +211,16 @@ export async function encryptTailPointer(
 }
 
 /**
- * Decrypts the 32-byte tail pointer
+ * Decrypts the 32-byte tail pointer with constant-time error masking
  */
 export async function decryptTailPointer(
   tail32: Uint8Array,
-  key4: Uint8Array
+  key4: Uint8Array,
+  salt?: Uint8Array
 ): Promise<{ offset: number; length: number }> {
   if (tail32.length !== 32) {
     throw new Error('Decryption failed. Check all keys.');
   }
-
-  const pointerNonce = await derivePointerNonce(key4);
 
   try {
     const cryptoKey = await crypto.subtle.importKey(
@@ -213,21 +231,33 @@ export async function decryptTailPointer(
       ['decrypt']
     );
 
-    const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: pointerNonce, tagLength: 128 },
-      cryptoKey,
-      tail32
-    );
+    const noncesToTry: Uint8Array[] = [];
+    if (salt) {
+      noncesToTry.push(await derivePointerNonce(key4, salt));
+    }
+    noncesToTry.push(await derivePointerNonce(key4)); // unsalted / legacy fallback
 
-    const view = new DataView(decrypted);
-    const offset = Number(view.getBigUint64(0, true));
-    const length = view.getUint32(8, true);
+    for (const nonce of noncesToTry) {
+      try {
+        const decrypted = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: nonce, tagLength: 128 },
+          cryptoKey,
+          tail32
+        );
 
-    if (length !== METADATA_SIZE || offset < 0) {
-      throw new Error('Decryption failed. Check all keys.');
+        const view = new DataView(decrypted);
+        const offset = Number(view.getBigUint64(0, true));
+        const length = view.getUint32(8, true);
+
+        if (length === METADATA_SIZE && offset >= 0) {
+          return { offset, length };
+        }
+      } catch {
+        // Continue to fallback nonce if available
+      }
     }
 
-    return { offset, length };
+    throw new Error('Decryption failed. Check all keys.');
   } catch {
     throw new Error('Decryption failed. Check all keys.');
   }

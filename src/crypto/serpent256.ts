@@ -22,6 +22,22 @@ function rotl32(x: number, r: number): number {
   return ((x << r) | (x >>> (32 - r))) >>> 0;
 }
 
+function applySboxBitslice(s: number[], r0: number, r1: number, r2: number, r3: number): [number, number, number, number] {
+  let o0 = 0, o1 = 0, o2 = 0, o3 = 0;
+  for (let bit = 0; bit < 32; bit++) {
+    const inVal = ((r0 >>> bit) & 1) |
+                  (((r1 >>> bit) & 1) << 1) |
+                  (((r2 >>> bit) & 1) << 2) |
+                  (((r3 >>> bit) & 1) << 3);
+    const outVal = s[inVal];
+    o0 |= (outVal & 1) << bit;
+    o1 |= ((outVal >>> 1) & 1) << bit;
+    o2 |= ((outVal >>> 2) & 1) << bit;
+    o3 |= ((outVal >>> 3) & 1) << bit;
+  }
+  return [o0 >>> 0, o1 >>> 0, o2 >>> 0, o3 >>> 0];
+}
+
 export class Serpent256 {
   private subkeys: Uint32Array; // 33 subkeys of 4 words = 132 words
 
@@ -44,22 +60,22 @@ export class Serpent256 {
       w[i] = rotl32(temp, 11);
     }
 
-    // Apply S-boxes to generate 33 subkeys (132 words)
+    // Apply S-boxes in bit-slice format to generate 33 subkeys (132 words)
     this.subkeys = new Uint32Array(132);
     for (let i = 0; i < 33; i++) {
       const boxIdx = (32 + 3 - i) % 8;
       const baseIdx = 8 + i * 4;
-      const s = SBOX[boxIdx];
-
-      for (let j = 0; j < 4; j++) {
-        let val = w[baseIdx + j];
-        let out = 0;
-        for (let nibble = 0; nibble < 8; nibble++) {
-          const inNib = (val >>> (nibble * 4)) & 0x0F;
-          out |= (s[inNib] << (nibble * 4));
-        }
-        this.subkeys[i * 4 + j] = out >>> 0;
-      }
+      const [sk0, sk1, sk2, sk3] = applySboxBitslice(
+        SBOX[boxIdx],
+        w[baseIdx],
+        w[baseIdx + 1],
+        w[baseIdx + 2],
+        w[baseIdx + 3]
+      );
+      this.subkeys[i * 4] = sk0;
+      this.subkeys[i * 4 + 1] = sk1;
+      this.subkeys[i * 4 + 2] = sk2;
+      this.subkeys[i * 4 + 3] = sk3;
     }
   }
 
@@ -72,30 +88,14 @@ export class Serpent256 {
 
     for (let r = 0; r < 32; r++) {
       // Key mixing
-      const k0 = this.subkeys[r * 4];
-      const k1 = this.subkeys[r * 4 + 1];
-      const k2 = this.subkeys[r * 4 + 2];
-      const k3 = this.subkeys[r * 4 + 3];
+      x0 ^= this.subkeys[r * 4];
+      x1 ^= this.subkeys[r * 4 + 1];
+      x2 ^= this.subkeys[r * 4 + 2];
+      x3 ^= this.subkeys[r * 4 + 3];
 
-      x0 ^= k0;
-      x1 ^= k1;
-      x2 ^= k2;
-      x3 ^= k3;
-
-      // S-Box application
+      // S-Box application in bit-slice form
       const s = SBOX[r % 8];
-      let o0 = 0, o1 = 0, o2 = 0, o3 = 0;
-      for (let nib = 0; nib < 8; nib++) {
-        const shift = nib * 4;
-        o0 |= (s[(x0 >>> shift) & 0x0F] << shift);
-        o1 |= (s[(x1 >>> shift) & 0x0F] << shift);
-        o2 |= (s[(x2 >>> shift) & 0x0F] << shift);
-        o3 |= (s[(x3 >>> shift) & 0x0F] << shift);
-      }
-      x0 = o0 >>> 0;
-      x1 = o1 >>> 0;
-      x2 = o2 >>> 0;
-      x3 = o3 >>> 0;
+      [x0, x1, x2, x3] = applySboxBitslice(s, x0, x1, x2, x3);
 
       // Linear transformation (except round 31)
       if (r < 31) {
@@ -134,8 +134,7 @@ export class Serpent256 {
 
     for (let offset = 0; offset < data.length; offset += BLOCK_SIZE) {
       blockBuffer.set(baseNonce.subarray(0, 8), 0);
-      const mixedCounter = counter ^ (BigInt(chunkIndex) << 32n);
-      view.setBigUint64(8, mixedCounter, true);
+      view.setBigUint64(8, counter, true);
 
       this.encryptBlock(blockBuffer);
 

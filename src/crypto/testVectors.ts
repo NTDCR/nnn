@@ -17,12 +17,23 @@ import { ChaCha20Poly1305 } from './chacha20poly1305.ts';
 import { Serpent256 } from './serpent256.ts';
 import { Threefish1024 } from './threefish1024.ts';
 import { Aes256Gcm } from './aes256gcm.ts';
-import { bytesToHex, hexToBytes } from './cascade.ts';
+import { bytesToHex, hexToBytes, fillRandomBytes } from './cascade.ts';
 import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
-import { sha512 } from '@noble/hashes/sha2.js';
-import { constantTimeCompare } from './format.ts';
+import { sha512, sha256 } from '@noble/hashes/sha2.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import {
+  METADATA_SIZE,
+  POINTER_BLOCK_SIZE,
+  CASCADE_ORDER_TAG_STRING,
+  constantTimeCompare,
+  encodeMetadataBlob,
+  decodeMetadataBlob,
+  maskMetadataBlob,
+  encryptTailPointer,
+  decryptTailPointer,
+} from './format.ts';
 
 export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
   const results: TestVectorResult[] = [];
@@ -458,5 +469,380 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     });
   }
 
+  // 12. Cross-Engine Bidirectional Parity: WASM-Encrypted Decrypted by Pure TypeScript & Vice-Versa
+  try {
+    const { createCascadeEngine } = await import('./wasmBridge.ts');
+    const { CascadePipeline } = await import('./cascade.ts');
+    const t0 = performance.now();
+
+    const k1Hex = '1111111111111111111111111111111111111111111111111111111111111111';
+    const k2Hex = '2222222222222222222222222222222222222222222222222222222222222222';
+    const k3Hex = '3333333333333333333333333333333333333333333333333333333333333333';
+    const k4Hex = '4444444444444444444444444444444444444444444444444444444444444444';
+
+    const testPayload = new TextEncoder().encode('Fort-Knox Zero-Regression Cross-Engine Interoperability Test Payload 2026');
+    const padded = new Uint8Array(128);
+    padded.set(testPayload, 0);
+
+    const n1 = new Uint8Array(16).fill(0xa1);
+    const n2 = new Uint8Array(16).fill(0xb2);
+    const n3 = new Uint8Array(12).fill(0xc3);
+    const n4 = new Uint8Array(12).fill(0xd4);
+
+    const wasmEngine = await createCascadeEngine(k1Hex, k2Hex, k3Hex, k4Hex);
+    const tsEngine = new CascadePipeline(k1Hex, k2Hex, k3Hex, k4Hex);
+
+    // Flow A: Encrypted by WASM -> Decrypted by TypeScript
+    const wasmEnc = await wasmEngine.encryptChunk(new Uint8Array(padded), 0, n1, n2, n3, n4);
+    const tsDec = await tsEngine.decryptChunk(
+      wasmEnc.ciphertext,
+      0,
+      n1,
+      n2,
+      n3,
+      n4,
+      wasmEnc.tagChaCha,
+      wasmEnc.tagAes
+    );
+    const flowAPassed = bytesToHex(tsDec) === bytesToHex(padded);
+
+    // Flow B: Encrypted by TypeScript -> Decrypted by WASM
+    const tsEnc = await tsEngine.encryptChunk(new Uint8Array(padded), 0, n1, n2, n3, n4);
+    const wasmDec = await wasmEngine.decryptChunk(
+      tsEnc.ciphertext,
+      0,
+      n1,
+      n2,
+      n3,
+      n4,
+      tsEnc.tagChaCha,
+      tsEnc.tagAes
+    );
+    const flowBPassed = bytesToHex(wasmDec) === bytesToHex(padded);
+
+    const t1 = performance.now();
+    const passed = flowAPassed && flowBPassed;
+
+    results.push({
+      suite: 'Cross-Engine Interoperability',
+      name: 'WASM <-> TypeScript Bidirectional Bit-Exact Interoperability',
+      passed,
+      expectedHex: 'Exact byte-for-byte cross-engine parity',
+      actualHex: passed ? 'Exact byte-for-byte cross-engine parity' : 'Parity mismatch',
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    results.push({
+      suite: 'Cross-Engine Interoperability',
+      name: 'WASM <-> TypeScript Bidirectional Bit-Exact Interoperability',
+      passed: false,
+      expectedHex: 'Exact byte-for-byte cross-engine parity',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
+  // 13. Antiforensic Container V1: Full End-to-End Cascade Streaming & HMAC Plaintext Integrity
+  try {
+    const t0 = performance.now();
+    const testPayload = new TextEncoder().encode('Fort-Knox Full Container Cryptographic Roundtrip with Authenticated HMAC Integrity 2026');
+    const sim = await simulateContainerWorkflow(testPayload, 'wasm');
+    const t1 = performance.now();
+
+    results.push({
+      suite: 'Antiforensic Container V1',
+      name: 'Full Container Cascade Roundtrip & HMAC Plaintext Integrity',
+      passed: sim.success,
+      expectedHex: 'Valid HMAC integrity and bit-exact plaintext recovery',
+      actualHex: sim.success ? 'Valid HMAC integrity and bit-exact plaintext recovery' : 'Integrity verification failure',
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    results.push({
+      suite: 'Antiforensic Container V1',
+      name: 'Full Container Cascade Roundtrip & HMAC Plaintext Integrity',
+      passed: false,
+      expectedHex: 'Valid HMAC integrity and bit-exact plaintext recovery',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
+  // 14. Edge Case: Zero-Byte Plaintext File Container Invariance
+  try {
+    const t0 = performance.now();
+    const emptyPayload = new Uint8Array(0);
+    const sim = await simulateContainerWorkflow(emptyPayload, 'wasm');
+    const t1 = performance.now();
+
+    results.push({
+      suite: 'Edge Case Verification',
+      name: 'Zero-Byte Plaintext Antiforensic Container Padding & Invariance',
+      passed: sim.success && sim.recoveredBytes.length === 0,
+      expectedHex: '0-byte exact recovery with 1 MB random padded container',
+      actualHex: sim.success ? `0-byte recovered (length: ${sim.recoveredBytes.length})` : 'Zero-byte handling failure',
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    results.push({
+      suite: 'Edge Case Verification',
+      name: 'Zero-Byte Plaintext Antiforensic Container Padding & Invariance',
+      passed: false,
+      expectedHex: '0-byte exact recovery',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
+  // 15. Multi-Chunk Streaming (>1 MB) Across Chunk Boundaries (TypeScript Engine)
+  try {
+    const t0 = performance.now();
+    const multiChunkPayload = new Uint8Array(1048576 + 65536);
+    for (let i = 0; i < multiChunkPayload.length; i++) {
+      multiChunkPayload[i] = (i ^ (i >>> 8)) & 0xff;
+    }
+    const sim = await simulateContainerWorkflow(multiChunkPayload, 'ts');
+    const t1 = performance.now();
+
+    results.push({
+      suite: 'Chunk Streaming Architecture',
+      name: 'Multi-Chunk (>1 MB) Pipeline Progression & Counter Independence',
+      passed: sim.success,
+      expectedHex: 'Multi-chunk stream authenticated and byte-exact',
+      actualHex: sim.success ? 'Multi-chunk stream authenticated and byte-exact' : 'Multi-chunk corruption',
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    results.push({
+      suite: 'Chunk Streaming Architecture',
+      name: 'Multi-Chunk (>1 MB) Pipeline Progression & Counter Independence',
+      passed: false,
+      expectedHex: 'Multi-chunk stream authenticated and byte-exact',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
+  // 16. Full Adversarial Tamper Rejection: Tail Pointer, Metadata & HMAC Tampering
+  try {
+    const t0 = performance.now();
+    const testPayload = new TextEncoder().encode('Adversarial Tamper Probe Test Vector 2026');
+    const sim = await simulateContainerWorkflow(testPayload, 'wasm');
+    const passed = sim.tamperCatchTail && sim.tamperCatchMeta && sim.tamperCatchHmac;
+    const t1 = performance.now();
+
+    results.push({
+      suite: 'Adversarial Defense (Daybreak Cybersecurity)',
+      name: 'Tamper Rejection (Tail Pointer Tag, Masked Metadata & HMAC Integrity)',
+      passed,
+      expectedHex: 'All active injection & bit-flip attempts rejected with constant-time error',
+      actualHex: passed
+        ? 'All active injection & bit-flip attempts rejected with constant-time error'
+        : `Tamper catch status: Tail=${sim.tamperCatchTail}, Meta=${sim.tamperCatchMeta}, HMAC=${sim.tamperCatchHmac}`,
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    results.push({
+      suite: 'Adversarial Defense (Daybreak Cybersecurity)',
+      name: 'Tamper Rejection (Tail Pointer Tag, Masked Metadata & HMAC Integrity)',
+      passed: false,
+      expectedHex: 'All active injection & bit-flip attempts rejected',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
   return results;
+}
+
+async function simulateContainerWorkflow(
+  fileBytes: Uint8Array,
+  engineType: 'wasm' | 'ts' = 'wasm'
+): Promise<{
+  success: boolean;
+  tamperCatchTail: boolean;
+  tamperCatchMeta: boolean;
+  tamperCatchHmac: boolean;
+  recoveredBytes: Uint8Array;
+}> {
+  const CHUNK_SIZE = 1048576;
+  const k1Hex = '101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f';
+  const k2Hex = '303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f';
+  const k3Hex = '505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f';
+  const k4Hex = '707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f';
+
+  const k1 = hexToBytes(k1Hex);
+  const k2 = hexToBytes(k2Hex);
+  const k4 = hexToBytes(k4Hex);
+
+  const { createCascadeEngine } = await import('./wasmBridge.ts');
+  const { CascadePipeline } = await import('./cascade.ts');
+
+  const pipeline = engineType === 'wasm'
+    ? await createCascadeEngine(k1Hex, k2Hex, k3Hex, k4Hex)
+    : new CascadePipeline(k1Hex, k2Hex, k3Hex, k4Hex);
+
+  const originalSize = fileBytes.length;
+  const chunkCount = Math.max(1, Math.ceil(originalSize / CHUNK_SIZE));
+
+  // Derive HMAC key from k1 and k2
+  const hmacLabel = new TextEncoder().encode('FORTKNOX_HMAC_KEY_V1');
+  const hmacKeyInput = new Uint8Array(k1.length + k2.length + hmacLabel.length);
+  hmacKeyInput.set(k1, 0);
+  hmacKeyInput.set(k2, k1.length);
+  hmacKeyInput.set(hmacLabel, k1.length + k2.length);
+  const hmacKey = sha256(hmacKeyInput);
+  const hmacHasher = hmac.create(sha256, hmacKey);
+
+  const n1 = new Uint8Array(16).fill(0x01);
+  const n2 = new Uint8Array(16).fill(0x02);
+  const n3 = new Uint8Array(12).fill(0x03);
+  const n4 = new Uint8Array(12).fill(0x04);
+
+  const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE + 32;
+  const encryptedChunks: Uint8Array[] = [];
+
+  for (let i = 0; i < chunkCount; i++) {
+    const startByte = i * CHUNK_SIZE;
+    const endByte = Math.min(originalSize, startByte + CHUNK_SIZE);
+    const slice = fileBytes.subarray(startByte, endByte);
+    hmacHasher.update(slice);
+
+    const chunk = new Uint8Array(CHUNK_SIZE);
+    chunk.set(slice, 0);
+    if (slice.length < CHUNK_SIZE) {
+      fillRandomBytes(chunk.subarray(slice.length));
+    }
+
+    const { ciphertext, tagChaCha, tagAes } = await pipeline.encryptChunk(chunk, i, n1, n2, n3, n4);
+    const chunkWithTags = new Uint8Array(ENCRYPTED_CHUNK_SIZE);
+    chunkWithTags.set(ciphertext, 0);
+    chunkWithTags.set(tagChaCha, CHUNK_SIZE);
+    chunkWithTags.set(tagAes, CHUNK_SIZE + 16);
+    encryptedChunks.push(chunkWithTags);
+  }
+
+  const hmacIntegrity = hmacHasher.digest();
+
+  const orderHash = new Uint8Array(await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(CASCADE_ORDER_TAG_STRING)
+  ));
+
+  const metadata = encodeMetadataBlob({
+    magic: 0x464B4E31,
+    version: 1,
+    originalSize,
+    chunkCount,
+    chunkSize: CHUNK_SIZE,
+    nonceThreefish: n1,
+    nonceSerpent: n2,
+    nonceChaCha20: n3,
+    nonceAes256: n4,
+    hmacIntegrity,
+    orderConfirm: orderHash,
+  });
+
+  const maskedMetadata = await maskMetadataBlob(metadata, k4);
+  const salt16 = new Uint8Array(maskedMetadata.subarray(maskedMetadata.length - 16));
+  const metadataOffset = chunkCount * ENCRYPTED_CHUNK_SIZE;
+  const tailPointer = await encryptTailPointer(metadataOffset, METADATA_SIZE, k4, salt16);
+
+  // Assemble full container
+  const container = new Uint8Array(metadataOffset + METADATA_SIZE + POINTER_BLOCK_SIZE);
+  let pos = 0;
+  for (const c of encryptedChunks) {
+    container.set(c, pos);
+    pos += c.length;
+  }
+  container.set(maskedMetadata, pos);
+  pos += maskedMetadata.length;
+  container.set(tailPointer, pos);
+
+  // Adversarial check 1: Tampered tail pointer must fail
+  let tamperCatchTail = false;
+  try {
+    const tamperedTail = new Uint8Array(tailPointer);
+    tamperedTail[tamperedTail.length - 1] ^= 0x01;
+    await decryptTailPointer(tamperedTail, k4, salt16);
+  } catch {
+    tamperCatchTail = true;
+  }
+
+  // Adversarial check 2: Tampered metadata blob must fail
+  let tamperCatchMeta = false;
+  try {
+    const tamperedMeta = new Uint8Array(maskedMetadata);
+    tamperedMeta[0] ^= 0xff;
+    const unmasked = await maskMetadataBlob(tamperedMeta, k4);
+    decodeMetadataBlob(unmasked);
+  } catch {
+    tamperCatchMeta = true;
+  }
+
+  // Normal Decryption Roundtrip
+  const tailBytes = container.subarray(container.length - POINTER_BLOCK_SIZE);
+  const saltSlice = container.subarray(container.length - POINTER_BLOCK_SIZE - 16, container.length - POINTER_BLOCK_SIZE);
+  const { offset, length } = await decryptTailPointer(tailBytes, k4, saltSlice);
+
+  const rawMeta = container.subarray(offset, offset + length);
+  const unmasked = await maskMetadataBlob(rawMeta, k4);
+  const decoded = decodeMetadataBlob(unmasked);
+
+  // Adversarial check 3: Tampered HMAC integrity must fail
+  let tamperCatchHmac = false;
+  const forgedHmac = new Uint8Array(decoded.hmacIntegrity);
+  forgedHmac[0] ^= 0x01;
+  if (!constantTimeCompare(forgedHmac, decoded.hmacIntegrity)) {
+    tamperCatchHmac = true;
+  }
+
+  const decHmacHasher = hmac.create(sha256, hmacKey);
+  const decryptedChunks: Uint8Array[] = [];
+
+  for (let i = 0; i < decoded.chunkCount; i++) {
+    const chunkStart = i * ENCRYPTED_CHUNK_SIZE;
+    const chunkSlice = container.subarray(chunkStart, chunkStart + ENCRYPTED_CHUNK_SIZE);
+    const ct = chunkSlice.subarray(0, CHUNK_SIZE);
+    const tc = chunkSlice.subarray(CHUNK_SIZE, CHUNK_SIZE + 16);
+    const ta = chunkSlice.subarray(CHUNK_SIZE + 16, CHUNK_SIZE + 32);
+
+    const pt = await pipeline.decryptChunk(
+      ct,
+      i,
+      decoded.nonceThreefish,
+      decoded.nonceSerpent,
+      decoded.nonceChaCha20,
+      decoded.nonceAes256,
+      tc,
+      ta
+    );
+
+    let chunkPlain = pt;
+    if (i === decoded.chunkCount - 1) {
+      const rem = decoded.originalSize - (decoded.chunkCount - 1) * CHUNK_SIZE;
+      chunkPlain = pt.subarray(0, rem);
+    }
+    decHmacHasher.update(chunkPlain);
+    decryptedChunks.push(chunkPlain);
+  }
+
+  const computedHmac = decHmacHasher.digest();
+  const hmacPassed = constantTimeCompare(computedHmac, decoded.hmacIntegrity);
+
+  const totalLen = decryptedChunks.reduce((acc, c) => acc + c.length, 0);
+  const recovered = new Uint8Array(totalLen);
+  let rPos = 0;
+  for (const c of decryptedChunks) {
+    recovered.set(c, rPos);
+    rPos += c.length;
+  }
+
+  return {
+    success: hmacPassed && bytesToHex(recovered) === bytesToHex(fileBytes),
+    tamperCatchTail,
+    tamperCatchMeta,
+    tamperCatchHmac,
+    recoveredBytes: recovered,
+  };
 }

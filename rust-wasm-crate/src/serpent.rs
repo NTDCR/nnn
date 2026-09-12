@@ -26,11 +26,10 @@ impl Serpent256Ctr {
 
         let mut offset = 0;
         while offset < data.len() {
-            // Build CTR block: 8 bytes base_nonce + 8 bytes counter XOR chunk
+            // Build CTR block: 8 bytes base_nonce + 8 bytes counter (little-endian)
             let mut ctr_bytes = [0u8; 16];
             ctr_bytes[0..8].copy_from_slice(&base_nonce[0..8]);
-            let mixed_counter = counter ^ ((chunk_index as u128) << 64);
-            ctr_bytes[8..16].copy_from_slice(&mixed_counter.to_le_bytes()[0..8]);
+            ctr_bytes[8..16].copy_from_slice(&(counter as u64).to_le_bytes());
 
             keystream_block.copy_from_slice(&ctr_bytes);
             self.cipher.encrypt_block(&mut keystream_block);

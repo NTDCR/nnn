@@ -150,17 +150,26 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
-        if (parsed.keys) {
-          const sanitize = (val: unknown) =>
-            typeof val === 'string'
-              ? val.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, '')
-              : '';
+        const source = (parsed && typeof parsed === 'object' && parsed.keys) ? parsed.keys : parsed;
+        const sanitize = (val: unknown) =>
+          typeof val === 'string'
+            ? val.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, '')
+            : '';
+
+        const k1 = sanitize(source?.layer1ThreefishHex || source?.layer1_threefish_256bit);
+        const k2 = sanitize(source?.layer2SerpentHex || source?.layer2_serpent_256bit);
+        const k3 = sanitize(source?.layer3ChaChaHex || source?.layer3_chacha20_256bit);
+        const k4 = sanitize(source?.layer4AesHex || source?.layer4_aes_256bit);
+
+        if (k1 || k2 || k3 || k4) {
           onChangeKeys({
-            layer1ThreefishHex: sanitize(parsed.keys.layer1ThreefishHex || parsed.keys.layer1_threefish_256bit),
-            layer2SerpentHex: sanitize(parsed.keys.layer2SerpentHex || parsed.keys.layer2_serpent_256bit),
-            layer3ChaChaHex: sanitize(parsed.keys.layer3ChaChaHex || parsed.keys.layer3_chacha20_256bit),
-            layer4AesHex: sanitize(parsed.keys.layer4AesHex || parsed.keys.layer4_aes_256bit),
+            layer1ThreefishHex: k1 || keys.layer1ThreefishHex,
+            layer2SerpentHex: k2 || keys.layer2SerpentHex,
+            layer3ChaChaHex: k3 || keys.layer3ChaChaHex,
+            layer4AesHex: k4 || keys.layer4AesHex,
           });
+        } else {
+          alert('No recognizable 4-layer cascade keys found in the imported JSON.');
         }
       } catch {
         alert('Invalid keys JSON file format');

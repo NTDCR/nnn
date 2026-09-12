@@ -5,6 +5,8 @@
  * 80 rounds of MIX permutation
  */
 
+import { sha512 } from '@noble/hashes/sha2.js';
+
 const C240 = 0x1BD11BDAA9FC1A22n;
 
 const ROTATIONS: number[][] = [
@@ -29,20 +31,23 @@ export class Threefish1024 {
   private subkeys: BigUint64Array[]; // 21 subkeys of 16 words each
 
   constructor(keyBytes: Uint8Array, tweakBytes: Uint8Array) {
-    // Expand 32-byte key to 128 bytes using deterministic SHA-512 expansion if needed
+    // Expand 32-byte key to 128 bytes using deterministic SHA-512 expansion
     const k = new BigUint64Array(17);
-    const view = new DataView(keyBytes.buffer, keyBytes.byteOffset, keyBytes.byteLength);
 
     if (keyBytes.length === 32) {
-      // Repeat and mix 32-byte key into 16 words
-      for (let i = 0; i < 4; i++) {
-        const w = view.getBigUint64(i * 8, true);
-        k[i] = w;
-        k[i + 4] = w ^ 0x5A5A5A5A5A5A5A5An;
-        k[i + 8] = w ^ 0xA5A5A5A5A5A5A5A5n;
-        k[i + 12] = w ^ 0x0123456789ABCDEFn;
+      const prefix1 = new TextEncoder().encode('THREEFISH-1024-KEY-EXPANSION-PART-1');
+      const h1 = sha512.create().update(prefix1).update(keyBytes).digest();
+      const prefix2 = new TextEncoder().encode('THREEFISH-1024-KEY-EXPANSION-PART-2');
+      const h2 = sha512.create().update(prefix2).update(keyBytes).digest();
+      const expanded = new Uint8Array(128);
+      expanded.set(h1, 0);
+      expanded.set(h2, 64);
+      const expView = new DataView(expanded.buffer, expanded.byteOffset, 128);
+      for (let i = 0; i < 16; i++) {
+        k[i] = expView.getBigUint64(i * 8, true);
       }
     } else {
+      const view = new DataView(keyBytes.buffer, keyBytes.byteOffset, keyBytes.byteLength);
       const words = Math.min(16, Math.floor(keyBytes.length / 8));
       for (let i = 0; i < words; i++) {
         k[i] = view.getBigUint64(i * 8, true);

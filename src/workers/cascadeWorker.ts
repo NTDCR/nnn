@@ -17,6 +17,8 @@ import {
   encryptTailPointer,
   decryptTailPointer,
 } from '../crypto/format.ts';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 const CHUNK_SIZE = 1048576; // 1 MB
 
@@ -27,11 +29,28 @@ const postWorkerMessage = (message: unknown, transfer?: Transferable[]) => {
   );
 };
 
+/**
+ * Derives a 32-byte key for HMAC-SHA256 plaintext integrity from Layer 1 & 2 keys
+ */
+function deriveHmacKey(k1: Uint8Array, k2: Uint8Array): Uint8Array {
+  const label = new TextEncoder().encode('FORTKNOX_HMAC_KEY_V1');
+  const combined = new Uint8Array(k1.length + k2.length + label.length);
+  combined.set(k1, 0);
+  combined.set(k2, k1.length);
+  combined.set(label, k1.length + k2.length);
+  return sha256(combined);
+}
+
 self.onmessage = async (e: MessageEvent) => {
   const { action, file, keys } = e.data;
+  let k1: Uint8Array | null = null;
+  let k2: Uint8Array | null = null;
+  let k4: Uint8Array | null = null;
 
   try {
-    const k4 = hexToBytes(keys.layer4AesHex);
+    k1 = hexToBytes(keys.layer1ThreefishHex);
+    k2 = hexToBytes(keys.layer2SerpentHex);
+    k4 = hexToBytes(keys.layer4AesHex);
 
     const engine = await createCascadeEngine(
       keys.layer1ThreefishHex,
@@ -41,9 +60,9 @@ self.onmessage = async (e: MessageEvent) => {
     );
 
     if (action === 'ENCRYPT') {
-      await processEncryption(file, engine, k4);
+      await processEncryption(file, engine, k1, k2, k4);
     } else if (action === 'DECRYPT') {
-      await processDecryption(file, engine, k4);
+      await processDecryption(file, engine, k1, k2, k4);
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : GENERIC_DECRYPT_ERROR;
@@ -53,16 +72,27 @@ self.onmessage = async (e: MessageEvent) => {
         ? GENERIC_DECRYPT_ERROR
         : message,
     });
+  } finally {
+    // Ephemeral key hygiene
+    if (k1) k1.fill(0);
+    if (k2) k2.fill(0);
+    if (k4) k4.fill(0);
   }
 };
 
 async function processEncryption(
   file: File,
   pipeline: WasmCascadeInstance,
+  k1: Uint8Array,
+  k2: Uint8Array,
   k4: Uint8Array
 ) {
   const originalSize = file.size;
   const chunkCount = Math.max(1, Math.ceil(originalSize / CHUNK_SIZE));
+
+  // Initialize genuine HMAC-SHA256 calculation for plaintext integrity
+  const hmacKey = deriveHmacKey(k1, k2);
+  const hmacHasher = hmac.create(sha256, hmacKey);
 
   // Generate independent random nonces for each layer
   const nonceThreefish = new Uint8Array(16);
@@ -91,6 +121,9 @@ async function processEncryption(
     const endByte = Math.min(originalSize, startByte + CHUNK_SIZE);
     const blobSlice = file.slice(startByte, endByte);
     const arrayBuffer = await blobSlice.arrayBuffer();
+
+    // Plaintext integrity update (accumulates unpadded bytes)
+    hmacHasher.update(new Uint8Array(arrayBuffer));
 
     let chunk = new Uint8Array(CHUNK_SIZE);
     chunk.set(new Uint8Array(arrayBuffer), 0);
@@ -149,9 +182,8 @@ async function processEncryption(
     });
   }
 
-  // Generate plaintext integrity tag (HMAC-SHA256 simulation using key1 + key2)
-  const hmacIntegrity = new Uint8Array(32);
-  crypto.getRandomValues(hmacIntegrity);
+  // Generate authentic plaintext integrity tag
+  const hmacIntegrity = hmacHasher.digest();
 
   const orderConfirm = new Uint8Array(32);
   // Layer order hash
@@ -174,8 +206,11 @@ async function processEncryption(
     orderConfirm,
   });
 
-  // Mask metadata using Key 4 with deterministic nonce
+  // Mask metadata using Key 4
   const maskedMetadata = await maskMetadataBlob(metadata, k4);
+
+  // Salt derived from trailing 16 random padding bytes of masked metadata
+  const salt16 = new Uint8Array(maskedMetadata.subarray(maskedMetadata.length - 16));
 
   // Metadata placement offset (immediately after all chunks)
   const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE + 32;
@@ -191,8 +226,8 @@ async function processEncryption(
     [maskedMetadata.buffer]
   );
 
-  // Encrypt 32-byte tail pointer
-  const tailPointer = await encryptTailPointer(metadataOffset, METADATA_SIZE, k4);
+  // Encrypt 32-byte tail pointer with container-specific salt
+  const tailPointer = await encryptTailPointer(metadataOffset, METADATA_SIZE, k4, salt16);
 
   // Emit 32-byte tail pointer
   postWorkerMessage(
@@ -221,6 +256,8 @@ async function processEncryption(
 async function processDecryption(
   file: File,
   pipeline: WasmCascadeInstance,
+  k1: Uint8Array,
+  k2: Uint8Array,
   k4: Uint8Array
 ) {
   const containerSize = file.size;
@@ -228,13 +265,20 @@ async function processDecryption(
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
-  // 1. Read last 32 bytes (tail pointer)
+  // 1. Read last 32 bytes (tail pointer) and the preceding 16 bytes (salt)
   const tailSlice = file.slice(containerSize - POINTER_BLOCK_SIZE, containerSize);
   const tailBuffer = await tailSlice.arrayBuffer();
   const tailBytes = new Uint8Array(tailBuffer);
 
-  // 2. Decrypt tail pointer with Key 4
-  const { offset, length } = await decryptTailPointer(tailBytes, k4);
+  const saltSlice = file.slice(
+    containerSize - POINTER_BLOCK_SIZE - 16,
+    containerSize - POINTER_BLOCK_SIZE
+  );
+  const saltBuffer = await saltSlice.arrayBuffer();
+  const salt16 = new Uint8Array(saltBuffer);
+
+  // 2. Decrypt tail pointer with Key 4 (salted or legacy fallback)
+  const { offset, length } = await decryptTailPointer(tailBytes, k4, salt16);
   if (
     offset < 0 ||
     length !== METADATA_SIZE ||
@@ -276,6 +320,10 @@ async function processDecryption(
   ) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
+
+  // Initialize HMAC-SHA256 for plaintext verification
+  const hmacKey = deriveHmacKey(k1, k2);
+  const hmacHasher = hmac.create(sha256, hmacKey);
 
   const startTime = performance.now();
   let processedBytes = 0;
@@ -324,6 +372,9 @@ async function processDecryption(
       outputBytes = plaintextChunk.subarray(0, remainingBytes);
     }
 
+    // Accumulate unpadded plaintext into HMAC
+    hmacHasher.update(outputBytes);
+
     processedBytes += outputBytes.length;
     const elapsedSec = (performance.now() - startTime) / 1000;
     const speedMBs = processedBytes / (1024 * 1024) / Math.max(0.01, elapsedSec);
@@ -352,6 +403,12 @@ async function processDecryption(
       speedMBs: Number(speedMBs.toFixed(1)),
       etaSeconds: Math.ceil(((chunkCount - i - 1) * (CHUNK_SIZE / (1024 * 1024))) / Math.max(0.01, speedMBs)),
     });
+  }
+
+  // Strict constant-time HMAC plaintext integrity verification
+  const computedHmac = hmacHasher.digest();
+  if (!constantTimeCompare(computedHmac, metadata.hmacIntegrity)) {
+    throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
   const totalTimeMs = performance.now() - startTime;
