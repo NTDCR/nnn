@@ -8,13 +8,20 @@ export const VerificationPanel: React.FC = () => {
 
   const handleRunTests = async () => {
     setIsRunning(true);
+    setResults([]);
     try {
-      const testResults = await runSelfVerificationTests();
-      setResults(testResults);
+      await runSelfVerificationTests((res) => {
+        setResults((prev) => [...(prev || []), res]);
+      });
+    } catch (err) {
+      console.error('Test execution error:', err);
     } finally {
       setIsRunning(false);
     }
   };
+
+  const passCount = results ? results.filter((r) => r.passed).length : 0;
+  const allPassed = results ? results.length === 17 && passCount === 17 : false;
 
   return (
     <div id="crypto-verification-panel" className="rounded-2xl bg-slate-900/90 border border-slate-800 p-5 md:p-6 shadow-xl backdrop-blur-sm">
@@ -43,12 +50,38 @@ export const VerificationPanel: React.FC = () => {
           className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
-          {isRunning ? 'Verifying Suites...' : 'Run All Test Vectors'}
+          {isRunning ? `Verifying (${results?.length || 0}/17)...` : 'Run All Test Vectors'}
         </button>
       </div>
 
+      {/* Progressive Summary Banner */}
+      {results && results.length > 0 && (
+        <div
+          className={`mt-4 p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 font-mono text-xs ${
+            allPassed
+              ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+              : 'bg-indigo-950/30 border-indigo-800/50 text-indigo-300'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-white">
+              {passCount} / {results.length} Suites Verified
+            </span>
+            <span className="text-[11px] text-slate-400">
+              ({Math.round((passCount / results.length) * 100)}% Pass Rate)
+            </span>
+          </div>
+
+          {allPassed && (
+            <span className="px-2.5 py-0.5 rounded-full bg-emerald-900/60 text-emerald-200 font-bold text-[10px] border border-emerald-700/60">
+              ALL 17 VERIFIED • 0 REGRESSION
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Results List */}
-      {results ? (
+      {results && results.length > 0 ? (
         <div className="mt-4 space-y-2.5">
           {results.map((res, idx) => (
             <div

@@ -36,8 +36,21 @@ import {
   deriveHmacKey,
 } from './format.ts';
 
-export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
+export async function runSelfVerificationTests(
+  onProgress?: (result: TestVectorResult) => void
+): Promise<TestVectorResult[]> {
   const results: TestVectorResult[] = [];
+  const report = (res: TestVectorResult) => {
+    results.push(res);
+    if (onProgress) {
+      try {
+        onProgress(res);
+      } catch {
+        // Ignore progress listener error
+      }
+    }
+  };
+  const yieldThread = () => new Promise((resolve) => setTimeout(resolve, 8));
 
   // 1. RFC 8439 ChaCha20-Poly1305 AEAD Test Vector (Section 2.8.2)
   try {
@@ -56,7 +69,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const expectedTag = '1ae10b594f09e26a7e902ecbd0600691';
     const t1 = performance.now();
 
-    results.push({
+    report({
       suite: 'RFC 8439',
       name: 'ChaCha20-Poly1305 AEAD Test Vector',
       passed: actualHex.toLowerCase() === expectedTag.toLowerCase(),
@@ -65,7 +78,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'RFC 8439',
       name: 'ChaCha20-Poly1305 AEAD Test Vector',
       passed: false,
@@ -92,7 +105,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
     const passed = bytesToHex(decrypted) === bytesToHex(plaintext);
 
-    results.push({
+    report({
       suite: 'NIST SP 800-38D',
       name: 'AES-256-GCM Roundtrip Authenticated Verification',
       passed,
@@ -101,7 +114,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'NIST SP 800-38D',
       name: 'AES-256-GCM Roundtrip Authenticated Verification',
       passed: false,
@@ -130,7 +143,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
     const passed = bytesToHex(decryptedBuf) === bytesToHex(testData);
 
-    results.push({
+    report({
       suite: 'NESSIE / AES Finalist',
       name: 'Serpent-256 CTR Mode Bi-directional Invariance',
       passed,
@@ -139,7 +152,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'NESSIE / AES Finalist',
       name: 'Serpent-256 CTR Mode Bi-directional Invariance',
       passed: false,
@@ -168,7 +181,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
     const passed = bytesToHex(plainData) === bytesToHex(data);
 
-    results.push({
+    report({
       suite: 'Skein / Threefish Specification',
       name: 'Threefish-1024 CTR Mode 80-Round S-Boxless Invariance',
       passed,
@@ -177,7 +190,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Skein / Threefish Specification',
       name: 'Threefish-1024 CTR Mode 80-Round S-Boxless Invariance',
       passed: false,
@@ -196,7 +209,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
 
     const passed = bytesToHex(bobSecret) === bytesToHex(aliceSecret);
-    results.push({
+    report({
       suite: 'NIST FIPS 203',
       name: 'ML-KEM-1024 (Kyber) Post-Quantum Key Encapsulation (@noble/post-quantum)',
       passed,
@@ -205,7 +218,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'NIST FIPS 203',
       name: 'ML-KEM-1024 (Kyber) Post-Quantum Key Encapsulation (@noble/post-quantum)',
       passed: false,
@@ -224,7 +237,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const valid = ml_dsa87.verify(signature, msg, dsaKeys.publicKey);
     const t1 = performance.now();
 
-    results.push({
+    report({
       suite: 'NIST FIPS 204',
       name: 'ML-DSA-87 (Dilithium) Lattice Signature Verification (@noble/post-quantum)',
       passed: valid,
@@ -233,7 +246,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'NIST FIPS 204',
       name: 'ML-DSA-87 (Dilithium) Lattice Signature Verification (@noble/post-quantum)',
       passed: false,
@@ -253,7 +266,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
 
     const actualHex = bytesToHex(derived);
-    results.push({
+    report({
       suite: 'RFC 5869',
       name: 'HKDF-SHA512 Key Derivation Function (@noble/hashes)',
       passed: actualHex.length === 84, // 42 bytes = 84 hex
@@ -262,7 +275,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'RFC 5869',
       name: 'HKDF-SHA512 Key Derivation Function (@noble/hashes)',
       passed: false,
@@ -286,7 +299,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
 
     const passed = bytesToHex(dec) === bytesToHex(testData);
-    results.push({
+    report({
       suite: 'RustCrypto WASM (serpent 0.4.0)',
       name: 'Serpent-256 CTR Mode (Compiled Rust WASM Binary)',
       passed,
@@ -295,7 +308,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'RustCrypto WASM (serpent 0.4.0)',
       name: 'Serpent-256 CTR Mode (Compiled Rust WASM Binary)',
       passed: false,
@@ -319,7 +332,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
 
     const passed = bytesToHex(dec) === bytesToHex(testData);
-    results.push({
+    report({
       suite: 'RustCrypto WASM (threefish 0.6.0)',
       name: 'Threefish-1024 CTR Mode (Compiled Rust WASM Binary)',
       passed,
@@ -328,7 +341,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'RustCrypto WASM (threefish 0.6.0)',
       name: 'Threefish-1024 CTR Mode (Compiled Rust WASM Binary)',
       passed: false,
@@ -369,7 +382,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
     const passed = bitFlipCaught && compareIdentical && compareDivergent;
 
-    results.push({
+    report({
       suite: 'Adversarial Defense (NIST SP 800-38D / FIPS 198-1)',
       name: 'Tamper Detection & Constant-Time Resistance Against Active Forgery',
       passed,
@@ -378,7 +391,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Adversarial Defense (NIST SP 800-38D / FIPS 198-1)',
       name: 'Tamper Detection & Constant-Time Resistance Against Active Forgery',
       passed: false,
@@ -451,7 +464,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
     const passed = wasmPassed && tsPassed && tamperDetected;
 
-    results.push({
+    report({
       suite: 'Dual-Engine Architecture',
       name: '4-Layer Cascade Pipeline (WASM & Pure TypeScript Engines)',
       passed,
@@ -460,7 +473,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Dual-Engine Architecture',
       name: '4-Layer Cascade Pipeline (WASM & Pure TypeScript Engines)',
       passed: false,
@@ -524,7 +537,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const t1 = performance.now();
     const passed = flowAPassed && flowBPassed;
 
-    results.push({
+    report({
       suite: 'Cross-Engine Interoperability',
       name: 'WASM <-> TypeScript Bidirectional Bit-Exact Interoperability',
       passed,
@@ -533,7 +546,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Cross-Engine Interoperability',
       name: 'WASM <-> TypeScript Bidirectional Bit-Exact Interoperability',
       passed: false,
@@ -550,7 +563,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const sim = await simulateContainerWorkflow(testPayload, 'wasm');
     const t1 = performance.now();
 
-    results.push({
+    report({
       suite: 'Antiforensic Container V1',
       name: 'Full Container Cascade Roundtrip & HMAC Plaintext Integrity',
       passed: sim.success,
@@ -559,7 +572,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Antiforensic Container V1',
       name: 'Full Container Cascade Roundtrip & HMAC Plaintext Integrity',
       passed: false,
@@ -576,7 +589,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const sim = await simulateContainerWorkflow(emptyPayload, 'wasm');
     const t1 = performance.now();
 
-    results.push({
+    report({
       suite: 'Edge Case Verification',
       name: 'Zero-Byte Plaintext Antiforensic Container Padding & Invariance',
       passed: sim.success && sim.recoveredBytes.length === 0,
@@ -585,7 +598,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Edge Case Verification',
       name: 'Zero-Byte Plaintext Antiforensic Container Padding & Invariance',
       passed: false,
@@ -605,7 +618,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const sim = await simulateContainerWorkflow(multiChunkPayload, 'ts');
     const t1 = performance.now();
 
-    results.push({
+    report({
       suite: 'Chunk Streaming Architecture',
       name: 'Multi-Chunk (>1 MB) Pipeline Progression & Counter Independence',
       passed: sim.success,
@@ -614,7 +627,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Chunk Streaming Architecture',
       name: 'Multi-Chunk (>1 MB) Pipeline Progression & Counter Independence',
       passed: false,
@@ -632,7 +645,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const passed = sim.tamperCatchTail && sim.tamperCatchMeta && sim.tamperCatchHmac;
     const t1 = performance.now();
 
-    results.push({
+    report({
       suite: 'Adversarial Defense (Daybreak Cybersecurity)',
       name: 'Tamper Rejection (Tail Pointer Tag, Masked Metadata & HMAC Integrity)',
       passed,
@@ -643,7 +656,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Adversarial Defense (Daybreak Cybersecurity)',
       name: 'Tamper Rejection (Tail Pointer Tag, Masked Metadata & HMAC Integrity)',
       passed: false,
@@ -685,7 +698,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
     const allPassed = cipherDiffers && roundtripPassed && containerSim.success;
     const t1 = performance.now();
 
-    results.push({
+    report({
       suite: 'Native 1024-Bit Key Architecture',
       name: 'Threefish-1024 Native 1024-Bit Keying & 1792-Bit Container Roundtrip',
       passed: allPassed,
@@ -696,7 +709,7 @@ export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
       executionTimeMs: Number((t1 - t0).toFixed(2)),
     });
   } catch (err) {
-    results.push({
+    report({
       suite: 'Native 1024-Bit Key Architecture',
       name: 'Threefish-1024 Native 1024-Bit Keying & 1792-Bit Container Roundtrip',
       passed: false,
