@@ -26,8 +26,8 @@ export function hexToBytes(hex: string, expectedBytes?: number): Uint8Array {
       throw new Error(`Key must be exactly ${expectedBytes * 2} hexadecimal characters (${expectedBytes * 8} bits).`);
     }
   } else {
-    // Allow 256 bits (64 hex), 1024 bits (256 hex), or any valid even length
-    if (cleanHex.length !== 64 && cleanHex.length !== 256 && cleanHex.length % 2 !== 0) {
+    // Strictly require either 256 bits (64 hex) or 1024 bits (256 hex)
+    if (cleanHex.length !== 64 && cleanHex.length !== 256) {
       throw new Error('Key must be either 64 hex characters (256 bits) or 256 hex characters (1024 bits).');
     }
   }
@@ -56,6 +56,13 @@ export function fillRandomBytes(buffer: Uint8Array): void {
     const chunk = buffer.subarray(offset, Math.min(offset + MAX_CHUNK, buffer.length));
     crypto.getRandomValues(chunk);
   }
+}
+
+/**
+ * Constant-memory zeroization of sensitive key material
+ */
+export function zeroizeBytes(buffer: Uint8Array): void {
+  buffer.fill(0);
 }
 
 export function generateRandomKey(byteLength: number = 32): string {
@@ -225,5 +232,12 @@ export class CascadePipeline {
     } catch {
       throw new Error(GENERIC_DECRYPT_ERROR);
     }
+  }
+
+  public destroy(): void {
+    this.threefish.destroy();
+    this.serpent.destroy();
+    this.chacha.destroy();
+    this.aes.destroy();
   }
 }

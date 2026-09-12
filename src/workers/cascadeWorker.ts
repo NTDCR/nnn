@@ -16,6 +16,7 @@ import {
   maskMetadataBlob,
   encryptTailPointer,
   decryptTailPointer,
+  deriveHmacKey,
 } from '../crypto/format.ts';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -29,34 +30,24 @@ const postWorkerMessage = (message: unknown, transfer?: Transferable[]) => {
   );
 };
 
-/**
- * Derives a 32-byte key for HMAC-SHA256 plaintext integrity from Layer 1 & 2 keys
- */
-function deriveHmacKey(k1: Uint8Array, k2: Uint8Array): Uint8Array {
-  const label = new TextEncoder().encode('FORTKNOX_HMAC_KEY_V1');
-  const combined = new Uint8Array(k1.length + k2.length + label.length);
-  combined.set(k1, 0);
-  combined.set(k2, k1.length);
-  combined.set(label, k1.length + k2.length);
-  return sha256(combined);
-}
-
 self.onmessage = async (e: MessageEvent) => {
   const { action, file, keys } = e.data;
   let k1: Uint8Array | null = null;
   let k2: Uint8Array | null = null;
+  let k3: Uint8Array | null = null;
   let k4: Uint8Array | null = null;
 
   try {
     k1 = hexToBytes(keys.layer1ThreefishHex);
-    k2 = hexToBytes(keys.layer2SerpentHex);
-    k4 = hexToBytes(keys.layer4AesHex);
+    k2 = hexToBytes(keys.layer2SerpentHex, 32);
+    k3 = hexToBytes(keys.layer3ChaChaHex, 32);
+    k4 = hexToBytes(keys.layer4AesHex, 32);
 
     const engine = await createCascadeEngine(
-      keys.layer1ThreefishHex,
-      keys.layer2SerpentHex,
-      keys.layer3ChaChaHex,
-      keys.layer4AesHex
+      k1,
+      k2,
+      k3,
+      k4
     );
 
     if (action === 'ENCRYPT') {
@@ -73,9 +64,10 @@ self.onmessage = async (e: MessageEvent) => {
         : message,
     });
   } finally {
-    // Ephemeral key hygiene
+    // Comprehensive ephemeral key hygiene
     if (k1) k1.fill(0);
     if (k2) k2.fill(0);
+    if (k3) k3.fill(0);
     if (k4) k4.fill(0);
   }
 };

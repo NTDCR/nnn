@@ -23,6 +23,9 @@ export class Aes256Gcm {
   }
 
   public deriveChunkNonce(baseNonce: Uint8Array, chunkIndex: number): Uint8Array {
+    if (baseNonce.length < 12) {
+      throw new Error('AES-256-GCM base nonce must be at least 12 bytes');
+    }
     const nonce = new Uint8Array(baseNonce.subarray(0, 12));
     const idxView = new DataView(new ArrayBuffer(8));
     idxView.setBigUint64(0, BigInt(chunkIndex), true);
@@ -30,6 +33,10 @@ export class Aes256Gcm {
       nonce[4 + i] ^= idxView.getUint8(i);
     }
     return nonce;
+  }
+
+  public destroy(): void {
+    this.rawKey.fill(0);
   }
 
   /**

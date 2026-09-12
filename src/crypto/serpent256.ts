@@ -125,6 +125,9 @@ export class Serpent256 {
   }
 
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
+    if (baseNonce.length < 8) {
+      throw new Error('Serpent-256 base nonce must be at least 8 bytes');
+    }
     const BLOCK_SIZE = 16;
     const blocksInChunk = Math.ceil(data.length / BLOCK_SIZE);
     let counter = BigInt(chunkIndex) * BigInt(blocksInChunk);
@@ -146,5 +149,9 @@ export class Serpent256 {
       counter++;
     }
     blockBuffer.fill(0);
+  }
+
+  public destroy(): void {
+    this.subkeys.fill(0);
   }
 }

@@ -33,6 +33,7 @@ import {
   maskMetadataBlob,
   encryptTailPointer,
   decryptTailPointer,
+  deriveHmacKey,
 } from './format.ts';
 
 export async function runSelfVerificationTests(): Promise<TestVectorResult[]> {
@@ -739,13 +740,8 @@ async function simulateContainerWorkflow(
   const originalSize = fileBytes.length;
   const chunkCount = Math.max(1, Math.ceil(originalSize / CHUNK_SIZE));
 
-  // Derive HMAC key from k1 and k2
-  const hmacLabel = new TextEncoder().encode('FORTKNOX_HMAC_KEY_V1');
-  const hmacKeyInput = new Uint8Array(k1.length + k2.length + hmacLabel.length);
-  hmacKeyInput.set(k1, 0);
-  hmacKeyInput.set(k2, k1.length);
-  hmacKeyInput.set(hmacLabel, k1.length + k2.length);
-  const hmacKey = sha256(hmacKeyInput);
+  // Authoritative HMAC key derivation from k1 and k2
+  const hmacKey = deriveHmacKey(k1, k2);
   const hmacHasher = hmac.create(sha256, hmacKey);
 
   const n1 = new Uint8Array(16).fill(0x01);

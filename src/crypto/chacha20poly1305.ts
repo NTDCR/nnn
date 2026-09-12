@@ -53,6 +53,9 @@ export class ChaCha20Poly1305 {
   }
 
   public deriveChunkNonce(baseNonce: Uint8Array, chunkIndex: number): Uint8Array {
+    if (baseNonce.length < 12) {
+      throw new Error('ChaCha20-Poly1305 base nonce must be at least 12 bytes');
+    }
     const nonce = new Uint8Array(baseNonce.subarray(0, 12));
     const idxView = new DataView(new ArrayBuffer(8));
     idxView.setBigUint64(0, BigInt(chunkIndex), true);
@@ -60,6 +63,10 @@ export class ChaCha20Poly1305 {
       nonce[4 + i] ^= idxView.getUint8(i);
     }
     return nonce;
+  }
+
+  public destroy(): void {
+    this.rawKey.fill(0);
   }
 
   /**

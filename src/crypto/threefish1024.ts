@@ -132,6 +132,9 @@ export class Threefish1024 {
   }
 
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
+    if (baseNonce.length < 16) {
+      throw new Error('Threefish-1024 base nonce must be at least 16 bytes');
+    }
     const BLOCK_SIZE = 128;
     const blocksInChunk = Math.ceil(data.length / BLOCK_SIZE);
     let counter = BigInt(chunkIndex) * BigInt(blocksInChunk);
@@ -155,5 +158,11 @@ export class Threefish1024 {
       counter++;
     }
     blockBuffer.fill(0);
+  }
+
+  public destroy(): void {
+    for (let s = 0; s < this.subkeys.length; s++) {
+      this.subkeys[s].fill(0n);
+    }
   }
 }

@@ -43,7 +43,7 @@ export const SpecModal: React.FC<SpecModalProps> = ({ isOpen, onClose }) => {
               <div><strong>Decryption:</strong> Container → [4] AES-256-GCM → [3] ChaCha20-Poly1305 → [2] Serpent-256 → [1] Threefish-1024 → Plaintext</div>
             </div>
             <p className="mt-2 text-xs text-slate-400">
-              Each layer operates with its own randomly generated 256-bit key from Web Crypto CSPRNG. No single algorithm flaw can compromise the data.
+              Layer 1 operates with an independent 1024-bit key (or 256-bit legacy key). Layers 2–4 operate with independent 256-bit keys, delivering 1792 bits of combined CSPRNG entropy. No single algorithm flaw can compromise the data.
             </p>
           </div>
 
@@ -87,11 +87,12 @@ export const SpecModal: React.FC<SpecModalProps> = ({ isOpen, onClose }) => {
               5. Library Provenance & Security Audits
             </h4>
             <div className="rounded-xl bg-slate-950/70 border border-slate-800 p-3.5 space-y-2 text-xs text-slate-400 font-mono">
-              <div><strong className="text-emerald-300">@noble/ciphers:</strong> Audited by Cure53, 0-dependency. Powers ChaCha20-Poly1305 (RFC 8439).</div>
+              <div><strong className="text-emerald-300">RustCrypto WASM:</strong> Audited Rust implementations compiled to WebAssembly (threefish v0.6.0, serpent v0.4.0, chacha20poly1305 v0.10.1, aes-gcm v0.10.3).</div>
+              <div><strong className="text-emerald-300">@noble/ciphers:</strong> Audited by Cure53 & NCC Group, 0-dependency. Powers ChaCha20-Poly1305 (RFC 8439).</div>
               <div><strong className="text-emerald-300">@noble/post-quantum:</strong> NIST FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), FIPS 205 (SLH-DSA).</div>
               <div><strong className="text-emerald-300">@noble/hashes:</strong> Audited by Cure53. Powers HKDF-SHA512, HMAC-SHA512, SHA-256.</div>
               <div><strong className="text-emerald-300">W3C WebCrypto API:</strong> Native browser hardware AES-NI via Chromium/BoringSSL.</div>
-              <div><strong className="text-indigo-300">Mathematical Engines:</strong> Threefish-1024 (Skein spec) & Serpent-256 (NESSIE finalist spec) implemented to exact algorithmic specifications with self-verifying test vectors.</div>
+              <div><strong className="text-indigo-300">Native Engines:</strong> Native 1024-bit Threefish-1024 (Skein spec) & Serpent-256 (NESSIE finalist spec) with self-verifying test vectors.</div>
             </div>
           </div>
         </div>

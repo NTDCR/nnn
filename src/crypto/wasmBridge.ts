@@ -14,6 +14,7 @@ import initWasm, {
   decrypt_layer as wasmDecryptLayer
 } from '../wasm_pkg/fortknox_cascade_crypto.js';
 import { CascadePipeline, hexToBytes, GENERIC_DECRYPT_ERROR } from './cascade.ts';
+import { Threefish1024 } from './threefish1024.ts';
 
 const WASM_PUBLIC_URL = new URL('../wasm_pkg/fortknox_cascade_crypto_bg.wasm', import.meta.url).href;
 
@@ -176,6 +177,18 @@ export async function executeWasmLayer(
   key: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
+  // If Layer 1 and key is 128 bytes (native 1024-bit key), execute directly via Threefish1024
+  if (layerIdx === 1 && key.length === 128) {
+    const tweak = new Uint8Array([
+      0x54, 0x68, 0x72, 0x65, 0x65, 0x66, 0x69, 0x73,
+      0x68, 0x54, 0x77, 0x65, 0x61, 0x6b, 0x31, 0x36
+    ]);
+    const tf = new Threefish1024(key, tweak);
+    const work = new Uint8Array(data);
+    tf.processCtr(work, nonce, 0);
+    return work;
+  }
+
   await ensureWasmLoaded();
   if (mode === 'encrypt') {
     return wasmEncryptLayer(layerIdx, data, key, nonce);

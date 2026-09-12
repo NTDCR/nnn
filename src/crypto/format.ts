@@ -29,6 +29,19 @@ export function constantTimeCompare(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
+ * Authoritatively derives a 32-byte key for HMAC-SHA256 plaintext integrity from Layer 1 & 2 keys.
+ * Dynamically accommodates both 32-byte (legacy 256-bit) and 128-byte (native 1024-bit) Layer 1 keys.
+ */
+export function deriveHmacKey(k1: Uint8Array, k2: Uint8Array): Uint8Array {
+  const label = new TextEncoder().encode('FORTKNOX_HMAC_KEY_V1');
+  const combined = new Uint8Array(k1.length + k2.length + label.length);
+  combined.set(k1, 0);
+  combined.set(k2, k1.length);
+  combined.set(label, k1.length + k2.length);
+  return sha256(combined);
+}
+
+/**
  * Derives a 32-byte subkey for metadata masking using SHA-256 (via @noble/hashes)
  */
 async function deriveMetadataKey(key4: Uint8Array): Promise<Uint8Array> {
