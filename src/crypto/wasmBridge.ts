@@ -15,7 +15,7 @@ import initWasm, {
 } from '../wasm_pkg/fortknox_cascade_crypto.js';
 import { CascadePipeline, hexToBytes, GENERIC_DECRYPT_ERROR } from './cascade.ts';
 
-const WASM_PUBLIC_URL = '/fortknox_cascade_crypto_bg.wasm';
+const WASM_PUBLIC_URL = new URL('../wasm_pkg/fortknox_cascade_crypto_bg.wasm', import.meta.url).href;
 
 export interface WasmCascadeInstance {
   isWasmAccelerated: boolean;
