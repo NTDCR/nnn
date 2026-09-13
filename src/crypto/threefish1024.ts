@@ -317,7 +317,7 @@ export class Threefish1024 {
           rotL2 = ((bl2 << r) | (bh2 >>> inv)) >>> 0;
           rotH2 = ((bh2 << r) | (bl2 >>> inv)) >>> 0;
           rotL3 = ((bl3 << r) | (bh3 >>> inv)) >>> 0;
-          rotH3 = ((bl3 << r) | (bl3 >>> inv)) >>> 0;
+          rotH3 = ((bh3 << r) | (bl3 >>> inv)) >>> 0;
         } else if (r === 32) {
           rotL0 = bh0; rotH0 = bl0;
           rotL1 = bh1; rotH1 = bl1;
