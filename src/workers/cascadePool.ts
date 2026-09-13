@@ -35,22 +35,37 @@ export interface ProcessFileOptions {
   signal?: AbortSignal;
 }
 
+interface WorkerProbeResult {
+  worker: Worker;
+  elapsedMs: number;
+}
+
 // Cached core profile so calibration probe runs strictly ONCE per application session (~3ms overhead)
 let cachedCalibratedWorkers: number | null = null;
 
-async function calibrateWorkerPool(candidateWorkers: Worker[]): Promise<number> {
-  if (cachedCalibratedWorkers !== null) {
-    return cachedCalibratedWorkers;
+/**
+ * Calibrates the worker pool and strictly filters out Efficiency (E) cores.
+ * Measures cryptographic ALU execution time per worker instance.
+ * Workers with elapsedMs > 1.5x of the fastest core are identified as running
+ * on E-cores (or throttled cores) and are immediately terminated.
+ * Only verified Performance (P) cores are retained.
+ */
+async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Worker[]> {
+  if (candidateWorkers.length <= 1) {
+    return candidateWorkers;
   }
 
   try {
     const probePromises = candidateWorkers.map(
       (w) =>
-        new Promise<number>((resolve) => {
+        new Promise<WorkerProbeResult>((resolve) => {
           const handler = (e: MessageEvent) => {
             if (e.data.type === 'PROBE_DONE') {
               w.removeEventListener('message', handler);
-              resolve(typeof e.data.elapsedMs === 'number' ? e.data.elapsedMs : 9999);
+              resolve({
+                worker: w,
+                elapsedMs: typeof e.data.elapsedMs === 'number' ? e.data.elapsedMs : 9999,
+              });
             }
           };
           w.addEventListener('message', handler);
@@ -58,36 +73,46 @@ async function calibrateWorkerPool(candidateWorkers: Worker[]): Promise<number> 
         })
     );
 
-    // Timeout safety fallback of 350ms
-    const fallback = candidateWorkers.map(() => 50);
-    const timeout = new Promise<number[]>((resolve) =>
-      setTimeout(() => resolve(fallback), 350)
+    // Timeout safety fallback of 400ms
+    const fallback = candidateWorkers.map((w) => ({ worker: w, elapsedMs: 50 }));
+    const timeout = new Promise<WorkerProbeResult[]>((resolve) =>
+      setTimeout(() => resolve(fallback), 400)
     );
 
     const results = await Promise.race([Promise.all(probePromises), timeout]);
-    const sorted = [...results].sort((a, b) => a - b);
-    const fastest = Math.max(1.0, sorted[0]);
+    // Sort ascending by execution time (fastest first)
+    const sorted = [...results].sort((a, b) => a.elapsedMs - b.elapsedMs);
+    const fastest = Math.max(1.0, sorted[0].elapsedMs);
 
-    // Count how many cores perform within 2.3x of the fastest core
-    // (Filtering out efficiency/LITTLE cores that would cause Head-of-Line blocking)
-    let fastCount = 0;
-    for (const time of sorted) {
-      if (time <= fastest * 2.3) {
-        fastCount++;
+    // Strict P-Core threshold: Must execute within 1.5x of fastest core.
+    // Efficiency cores on x86 and ARM typically take 1.8x to 3.5x longer.
+    const pCoreWorkers: Worker[] = [];
+    const eCoreWorkers: Worker[] = [];
+
+    for (const res of sorted) {
+      if (res.elapsedMs <= fastest * 1.5) {
+        pCoreWorkers.push(res.worker);
+      } else {
+        eCoreWorkers.push(res.worker);
       }
     }
 
-    // Ensure an even count: clamp between 2 and candidateWorkers.length (e.g. 2, 4, 6, 8)
-    if (fastCount > 2 && fastCount % 2 !== 0) {
-      fastCount -= 1;
+    // Immediately terminate all identified E-core workers
+    for (const eWorker of eCoreWorkers) {
+      eWorker.terminate();
     }
-    const finalCount = Math.max(2, Math.min(candidateWorkers.length, fastCount));
-    cachedCalibratedWorkers = finalCount;
-  } catch {
-    cachedCalibratedWorkers = 2;
-  }
 
-  return cachedCalibratedWorkers;
+    // Safety: ensure at least 1 worker is available
+    if (pCoreWorkers.length === 0 && candidateWorkers.length > 0) {
+      pCoreWorkers.push(candidateWorkers[0]);
+    }
+
+    cachedCalibratedWorkers = pCoreWorkers.length;
+    return pCoreWorkers;
+  } catch {
+    cachedCalibratedWorkers = Math.min(candidateWorkers.length, 4);
+    return candidateWorkers;
+  }
 }
 
 export async function processFileWithPool(options: ProcessFileOptions): Promise<WorkerSuccessMessage> {
@@ -158,13 +183,10 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     if (signal?.aborted) throw new Error('Aborted');
 
-    // If in auto mode with candidate workers > 2 and not yet calibrated, run the micro-calibration probe
-    if (isMultiChunk && workers.length > 2 && cachedCalibratedWorkers === null && (!coreConcurrency || coreConcurrency === 'auto')) {
-      const calibratedCount = await calibrateWorkerPool(workers);
-      while (workers.length > calibratedCount) {
-        const excessWorker = workers.pop();
-        excessWorker?.terminate();
-      }
+    // Strict P-Core Enforcement: Micro-calibration identifies & terminates all E-core worker instances
+    let activeWorkers = workers;
+    if (isMultiChunk && workers.length > 1 && coreConcurrency !== 'webgpu') {
+      activeWorkers = await calibrateAndFilterPCores(workers);
     }
 
     if (signal?.aborted) throw new Error('Aborted');
@@ -172,7 +194,7 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
     if (action === 'ENCRYPT') {
       return await executePoolEncryption({
         file,
-        workers,
+        workers: activeWorkers,
         k1,
         k2,
         k4,
@@ -184,7 +206,7 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
     } else {
       return await executePoolDecryption({
         file,
-        workers,
+        workers: activeWorkers,
         k1,
         k2,
         k4,

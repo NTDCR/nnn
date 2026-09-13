@@ -299,12 +299,12 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
               disabled={isProcessing}
               className="bg-transparent text-indigo-300 font-mono text-[11px] outline-none cursor-pointer"
             >
-              <option value="auto" className="bg-slate-900 text-slate-200">Auto (Smart Probe)</option>
+              <option value="auto" className="bg-slate-900 text-slate-200">Auto (Strict P-Cores Only)</option>
               <option value="webgpu" className="bg-slate-900 text-slate-200">WebGPU (Hardware Compute)</option>
-              <option value="2" className="bg-slate-900 text-slate-200">2 Cores (Mobile Standard)</option>
-              <option value="4" className="bg-slate-900 text-slate-200">4 Cores (Quad-Core Performance)</option>
-              <option value="6" className="bg-slate-900 text-slate-200">6 Cores (Hexa-Core Performance)</option>
-              <option value="8" className="bg-slate-900 text-slate-200">8 Cores (Octa-Core Ultra 100+ MB/s)</option>
+              <option value="2" className="bg-slate-900 text-slate-200">2 P-Cores (Dual P-Core)</option>
+              <option value="4" className="bg-slate-900 text-slate-200">4 P-Cores (Quad P-Core)</option>
+              <option value="6" className="bg-slate-900 text-slate-200">6 P-Cores (Hexa P-Core)</option>
+              <option value="8" className="bg-slate-900 text-slate-200">8 P-Cores (Octa P-Core Ultra)</option>
             </select>
           </div>
 
