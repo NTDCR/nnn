@@ -28,7 +28,7 @@ export interface ProcessFileOptions {
   action: 'ENCRYPT' | 'DECRYPT';
   file: File;
   keys: CascadeKeys;
-  coreConcurrency?: 'auto' | 2 | 4 | 6 | 8;
+  coreConcurrency?: 'auto' | 'webgpu' | 2 | 4 | 6 | 8;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
@@ -112,6 +112,8 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
     let targetWorkerCount: number;
     if (!isMultiChunk) {
       targetWorkerCount = 1;
+    } else if (coreConcurrency === 'webgpu') {
+      targetWorkerCount = Math.min(hardwareConcurrency, 8);
     } else if (coreConcurrency === 2 || coreConcurrency === 4 || coreConcurrency === 6 || coreConcurrency === 8) {
       targetWorkerCount = coreConcurrency;
     } else {

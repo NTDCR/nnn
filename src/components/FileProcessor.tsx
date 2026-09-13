@@ -28,9 +28,10 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   const [useDirectDiskWrite, setUseDirectDiskWrite] = useState<boolean>(true);
   const [downloadBlobUrl, setDownloadBlobUrl] = useState<string | null>(null);
   const [streamedDirectToDisk, setStreamedDirectToDisk] = useState<boolean>(false);
-  const [coreMode, setCoreMode] = useState<'auto' | 2 | 4 | 6 | 8>(() => {
+  const [coreMode, setCoreMode] = useState<'auto' | 'webgpu' | 2 | 4 | 6 | 8>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
       const saved = localStorage.getItem('fortknox_core_mode');
+      if (saved === 'webgpu') return 'webgpu';
       if (saved === '2') return 2;
       if (saved === '4') return 4;
       if (saved === '6') return 6;
@@ -282,13 +283,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* CPU Concurrency Selector */}
+          {/* CPU / GPU Concurrency Selector */}
           <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700/60 rounded-lg px-2.5 py-1 text-xs shadow-inner">
-            <span className="text-[11px] text-slate-400 font-mono">CPU:</span>
+            <span className="text-[11px] text-slate-400 font-mono">Engine:</span>
             <select
               value={coreMode}
               onChange={(e) => {
-                const nextMode = e.target.value === 'auto' ? 'auto' : (Number(e.target.value) as 2 | 4 | 6 | 8);
+                const val = e.target.value;
+                const nextMode = val === 'auto' ? 'auto' : val === 'webgpu' ? 'webgpu' : (Number(val) as 2 | 4 | 6 | 8);
                 setCoreMode(nextMode);
                 if (typeof window !== 'undefined' && window.localStorage) {
                   localStorage.setItem('fortknox_core_mode', String(nextMode));
@@ -298,6 +300,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
               className="bg-transparent text-indigo-300 font-mono text-[11px] outline-none cursor-pointer"
             >
               <option value="auto" className="bg-slate-900 text-slate-200">Auto (Smart Probe)</option>
+              <option value="webgpu" className="bg-slate-900 text-slate-200">WebGPU (Hardware Compute)</option>
               <option value="2" className="bg-slate-900 text-slate-200">2 Cores (Mobile Standard)</option>
               <option value="4" className="bg-slate-900 text-slate-200">4 Cores (Quad-Core Performance)</option>
               <option value="6" className="bg-slate-900 text-slate-200">6 Cores (Hexa-Core Performance)</option>

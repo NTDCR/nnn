@@ -33,6 +33,7 @@ export class ChaCha20Poly1305 {
   }
 
   private decryptBuffer: Uint8Array = new Uint8Array(1048576 + 16);
+  private encryptBuffer: Uint8Array = new Uint8Array(1048576 + 16);
 
   public destroy(): void {
     if (this.simdEngine) {
@@ -41,6 +42,7 @@ export class ChaCha20Poly1305 {
     }
     this.rawKey.fill(0);
     this.decryptBuffer.fill(0);
+    this.encryptBuffer.fill(0);
   }
 
   /**
@@ -51,10 +53,14 @@ export class ChaCha20Poly1305 {
     const cipher = this.simdEngine
       ? this.simdEngine.getCipher(nonce12, aad)
       : chacha20poly1305(this.rawKey, nonce12, aad);
-    const fullCiphertext = cipher.encrypt(data);
-    const splitPoint = fullCiphertext.length - 16;
-    data.set(fullCiphertext.subarray(0, splitPoint));
-    return new Uint8Array(fullCiphertext.subarray(splitPoint));
+    const requiredLen = data.length + 16;
+    const outBuf = this.encryptBuffer.length >= requiredLen
+      ? this.encryptBuffer.subarray(0, requiredLen)
+      : new Uint8Array(requiredLen);
+    cipher.encrypt(data, outBuf);
+    const splitPoint = data.length;
+    data.set(outBuf.subarray(0, splitPoint));
+    return new Uint8Array(outBuf.subarray(splitPoint, splitPoint + 16));
   }
 
   /**

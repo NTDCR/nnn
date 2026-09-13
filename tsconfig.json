@@ -20,7 +20,7 @@
         "./*"
       ]
     },
-    "types": ["vite/client", "vite-plugin-pwa/client"],
+    "types": ["vite/client", "vite-plugin-pwa/client", "@webgpu/types"],
     "allowImportingTsExtensions": true,
     "noEmit": true
   }
