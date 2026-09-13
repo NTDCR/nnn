@@ -23,60 +23,82 @@ function drainPendingChunks() {
     nextExpectedChunk++;
   }
 
-  if (isFinalizing && nextExpectedChunk === totalExpectedChunks) {
-    const digest = hmacHasher.digest();
-    hmacHasher = null;
-    (self as unknown as { postMessage: (msg: unknown, transfer?: Transferable[]) => void }).postMessage(
-      {
-        type: 'DIGEST_DONE',
-        digest: digest.buffer,
-      },
-      [digest.buffer]
-    );
+  if (isFinalizing) {
+    if (nextExpectedChunk === totalExpectedChunks) {
+      const digest = hmacHasher.digest();
+      hmacHasher = null;
+      const buf = digest.slice().buffer;
+      (self as unknown as { postMessage: (msg: unknown, transfer?: Transferable[]) => void }).postMessage(
+        {
+          type: 'DIGEST_DONE',
+          digest: buf,
+        },
+        [buf]
+      );
+    } else if (nextExpectedChunk > totalExpectedChunks) {
+      self.postMessage({
+        type: 'ERROR',
+        error: `HMAC chunk overflow: received ${nextExpectedChunk}, expected ${totalExpectedChunks}`,
+      });
+    }
   }
 }
 
 self.onmessage = (e: MessageEvent) => {
-  const data = e.data;
-  const action = data.action;
+  try {
+    const data = e.data;
+    const action = data?.action;
 
-  if (action === 'INIT_HMAC') {
-    const key = new Uint8Array(data.key);
-    try {
-      hmacHasher = hmac.create(sha256, key);
-      nextExpectedChunk = 0;
+    if (action === 'INIT_HMAC') {
+      const key = new Uint8Array(data.key);
+      try {
+        hmacHasher = hmac.create(sha256, key);
+        nextExpectedChunk = 0;
+        pendingChunks.clear();
+        isFinalizing = false;
+        totalExpectedChunks = 0;
+        self.postMessage({ type: 'HMAC_READY' });
+      } finally {
+        key.fill(0);
+      }
+      return;
+    }
+
+    if (action === 'UPDATE_CHUNK') {
+      const { chunkIndex, chunkData } = data;
+      const bytes = new Uint8Array(chunkData);
+      pendingChunks.set(chunkIndex, bytes);
+      drainPendingChunks();
+      return;
+    }
+
+    if (action === 'FINALIZE') {
+      totalExpectedChunks = data.totalChunks;
+      isFinalizing = true;
+      drainPendingChunks();
+      if (isFinalizing && pendingChunks.size === 0 && nextExpectedChunk < totalExpectedChunks) {
+        self.postMessage({
+          type: 'ERROR',
+          error: `Incomplete HMAC stream: received ${nextExpectedChunk} chunks, expected ${totalExpectedChunks}`,
+        });
+      }
+      return;
+    }
+
+    if (action === 'DESTROY') {
+      for (const b of pendingChunks.values()) {
+        b.fill(0);
+      }
       pendingChunks.clear();
-      isFinalizing = false;
-      totalExpectedChunks = 0;
-      self.postMessage({ type: 'HMAC_READY' });
-    } finally {
-      key.fill(0);
+      hmacHasher = null;
+      self.close();
+      return;
     }
-    return;
-  }
-
-  if (action === 'UPDATE_CHUNK') {
-    const { chunkIndex, chunkData } = data;
-    const bytes = new Uint8Array(chunkData);
-    pendingChunks.set(chunkIndex, bytes);
-    drainPendingChunks();
-    return;
-  }
-
-  if (action === 'FINALIZE') {
-    totalExpectedChunks = data.totalChunks;
-    isFinalizing = true;
-    drainPendingChunks();
-    return;
-  }
-
-  if (action === 'DESTROY') {
-    for (const b of pendingChunks.values()) {
-      b.fill(0);
-    }
-    pendingChunks.clear();
-    hmacHasher = null;
-    self.close();
-    return;
+  } catch (err: unknown) {
+    self.postMessage({
+      type: 'ERROR',
+      error: err instanceof Error ? err.message : 'HMAC worker error',
+    });
   }
 };
+

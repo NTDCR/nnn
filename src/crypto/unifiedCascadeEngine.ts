@@ -240,22 +240,34 @@ export class UnifiedCascadeEngine {
     }
     mem.set(data, DATA_OFFSET);
 
-    this.exports.encryptCascadeLayers123(
-      DATA_OFFSET,
-      dataLen,
-      N1_OFFSET,
-      N2_OFFSET,
-      N3_OFFSET,
-      chunkIndex,
-      AAD_OFFSET,
-      aadLen,
-      K3_OFFSET,
-      TAG_OFFSET,
-      OTK_OFFSET
-    );
+    let tagResult: Uint8Array;
+    try {
+      this.exports.encryptCascadeLayers123(
+        DATA_OFFSET,
+        dataLen,
+        N1_OFFSET,
+        N2_OFFSET,
+        N3_OFFSET,
+        chunkIndex,
+        AAD_OFFSET,
+        aadLen,
+        K3_OFFSET,
+        TAG_OFFSET,
+        OTK_OFFSET
+      );
 
-    data.set(mem.subarray(DATA_OFFSET, DATA_OFFSET + dataLen));
-    return new Uint8Array(mem.subarray(TAG_OFFSET, TAG_OFFSET + 16));
+      data.set(mem.subarray(DATA_OFFSET, DATA_OFFSET + dataLen));
+      tagResult = new Uint8Array(mem.subarray(TAG_OFFSET, TAG_OFFSET + 16));
+    } finally {
+      const scrubMem = new Uint8Array(this.memory.buffer);
+      scrubMem.subarray(DATA_OFFSET, DATA_OFFSET + dataLen).fill(0);
+      scrubMem.subarray(TAG_OFFSET, TAG_OFFSET + 16).fill(0);
+      scrubMem.subarray(N1_OFFSET, N1_OFFSET + 48).fill(0);
+      if (aadLen > 0) {
+        scrubMem.subarray(AAD_OFFSET, AAD_OFFSET + 16).fill(0);
+      }
+    }
+    return tagResult;
   }
 
   /**
@@ -299,27 +311,36 @@ export class UnifiedCascadeEngine {
     }
     mem.set(data, DATA_OFFSET);
 
-    const res = this.exports.decryptCascadeLayers123(
-      DATA_OFFSET,
-      dataLen,
-      N1_OFFSET,
-      N2_OFFSET,
-      N3_OFFSET,
-      chunkIndex,
-      AAD_OFFSET,
-      aadLen,
-      K3_OFFSET,
-      TAG_OFFSET,
-      OTK_OFFSET,
-      COMP_TAG_OFFSET
-    );
+    try {
+      const res = this.exports.decryptCascadeLayers123(
+        DATA_OFFSET,
+        dataLen,
+        N1_OFFSET,
+        N2_OFFSET,
+        N3_OFFSET,
+        chunkIndex,
+        AAD_OFFSET,
+        aadLen,
+        K3_OFFSET,
+        TAG_OFFSET,
+        OTK_OFFSET,
+        COMP_TAG_OFFSET
+      );
 
-    if (res !== 0) {
-      mem.fill(0, DATA_OFFSET, DATA_OFFSET + dataLen);
-      throw new Error('Decryption failed. Check all keys.');
+      if (res !== 0) {
+        throw new Error('Decryption failed. Check all keys.');
+      }
+
+      data.set(mem.subarray(DATA_OFFSET, DATA_OFFSET + dataLen));
+    } finally {
+      const scrubMem = new Uint8Array(this.memory.buffer);
+      scrubMem.subarray(DATA_OFFSET, DATA_OFFSET + dataLen).fill(0);
+      scrubMem.subarray(TAG_OFFSET, TAG_OFFSET + 32).fill(0);
+      scrubMem.subarray(N1_OFFSET, N1_OFFSET + 48).fill(0);
+      if (aadLen > 0) {
+        scrubMem.subarray(AAD_OFFSET, AAD_OFFSET + 16).fill(0);
+      }
     }
-
-    data.set(mem.subarray(DATA_OFFSET, DATA_OFFSET + dataLen));
   }
 
   public destroy(): void {

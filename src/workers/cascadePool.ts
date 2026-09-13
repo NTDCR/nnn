@@ -52,6 +52,7 @@ export class HmacWorkerClient {
   private digestPromise: Promise<Uint8Array> | null = null;
   private digestResolve: ((digest: Uint8Array) => void) | null = null;
   private digestReject: ((err: Error) => void) | null = null;
+  private workerError: Error | null = null;
 
   constructor(hmacKey: Uint8Array) {
     try {
@@ -60,10 +61,16 @@ export class HmacWorkerClient {
         this.worker.onmessage = (e: MessageEvent) => {
           if (e.data?.type === 'DIGEST_DONE' && e.data?.digest) {
             this.digestResolve?.(new Uint8Array(e.data.digest));
+          } else if (e.data?.type === 'ERROR') {
+            const err = new Error(e.data.error || 'HMAC worker error');
+            this.workerError = err;
+            this.digestReject?.(err);
           }
         };
         this.worker.onerror = (e) => {
-          this.digestReject?.(new Error(e?.message || 'HMAC worker error'));
+          const err = new Error(e?.message || 'HMAC worker error');
+          this.workerError = err;
+          this.digestReject?.(err);
         };
         const keyCopy = new Uint8Array(hmacKey);
         this.worker.postMessage({ action: 'INIT_HMAC', key: keyCopy.buffer }, [keyCopy.buffer]);
@@ -98,9 +105,21 @@ export class HmacWorkerClient {
 
   public async finalize(totalChunks: number): Promise<Uint8Array> {
     if (this.worker) {
+      if (this.workerError) {
+        throw this.workerError;
+      }
       this.digestPromise = new Promise((resolve, reject) => {
-        this.digestResolve = resolve;
-        this.digestReject = reject;
+        const timer = setTimeout(() => {
+          reject(new Error('HMAC worker finalize timed out'));
+        }, 30000);
+        this.digestResolve = (digest) => {
+          clearTimeout(timer);
+          resolve(digest);
+        };
+        this.digestReject = (err) => {
+          clearTimeout(timer);
+          reject(err);
+        };
       });
       this.worker.postMessage({ action: 'FINALIZE', totalChunks });
       return await this.digestPromise;
@@ -125,6 +144,11 @@ export class HmacWorkerClient {
       }
       this.worker.terminate();
       this.worker = null;
+    }
+    if (this.digestReject) {
+      this.digestReject(new Error('HMAC client destroyed'));
+      this.digestReject = null;
+      this.digestResolve = null;
     }
     for (const b of this.fallbackPending.values()) {
       b.fill(0);
@@ -989,7 +1013,13 @@ async function executePoolDecryption(params: {
   await writerPromise;
   if (writerError) throw writerError;
 
-  // Emit guaranteed 100% final progress so UI smoothly transitions to success
+  // Adversarial check: Verify HMAC integrity of entire recovered plaintext
+  const computedHmac = await hmacClient.finalize(chunkCount);
+  if (!constantTimeCompare(computedHmac, metadata.hmacIntegrity)) {
+    throw new Error(GENERIC_DECRYPT_ERROR);
+  }
+
+  // Emit guaranteed 100% final progress strictly after HMAC verification succeeds
   onProgress?.({
     type: 'PROGRESS',
     phase: 'DECRYPTING',
@@ -1001,12 +1031,6 @@ async function executePoolDecryption(params: {
     speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
     etaSeconds: 0,
   });
-
-  // Adversarial check: Verify HMAC integrity of entire recovered plaintext
-  const computedHmac = await hmacClient.finalize(chunkCount);
-  if (!constantTimeCompare(computedHmac, metadata.hmacIntegrity)) {
-    throw new Error(GENERIC_DECRYPT_ERROR);
-  }
 
   const totalTimeMs = performance.now() - startTime;
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);

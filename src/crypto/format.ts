@@ -365,7 +365,11 @@ export async function decryptTailPointer(
             return { offset, length };
           }
         }
-      } catch {
+        throw new Error('Decryption failed. Check all keys.');
+      } catch (e: unknown) {
+        if (e instanceof Error && e.message === 'Decryption failed. Check all keys.') {
+          throw e;
+        }
         // Fall through to Noble Ciphers fallback
       }
     }

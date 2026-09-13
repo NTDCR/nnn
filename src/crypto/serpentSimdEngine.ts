@@ -130,9 +130,14 @@ export class SerpentSimdEngine {
     memU8.set(baseNonce.subarray(0, 16), NONCE_OFFSET);
     memU8.set(data, DATA_OFFSET);
 
-    this.exports.processCtrSimd(DATA_OFFSET, dataLen, NONCE_OFFSET, chunkIndex);
-
-    data.set(new Uint8Array(this.memory.buffer, DATA_OFFSET, dataLen));
+    try {
+      this.exports.processCtrSimd(DATA_OFFSET, dataLen, NONCE_OFFSET, chunkIndex);
+      data.set(new Uint8Array(this.memory.buffer, DATA_OFFSET, dataLen));
+    } finally {
+      const scrubMem = new Uint8Array(this.memory.buffer);
+      scrubMem.subarray(DATA_OFFSET, DATA_OFFSET + dataLen).fill(0);
+      scrubMem.subarray(NONCE_OFFSET, NONCE_OFFSET + 16).fill(0);
+    }
   }
 
   public destroy(): void {

@@ -67,10 +67,14 @@ export class ChaCha20Poly1305 {
     const cipher = chacha20poly1305(this.rawKey, nonce12, aad);
     const requiredLen = data.length + 16;
     const outBuf = new Uint8Array(requiredLen);
-    cipher.encrypt(data, outBuf);
-    const splitPoint = data.length;
-    data.set(outBuf.subarray(0, splitPoint));
-    return new Uint8Array(outBuf.subarray(splitPoint, splitPoint + 16));
+    try {
+      cipher.encrypt(data, outBuf);
+      const splitPoint = data.length;
+      data.set(outBuf.subarray(0, splitPoint));
+      return new Uint8Array(outBuf.subarray(splitPoint, splitPoint + 16));
+    } finally {
+      outBuf.fill(0);
+    }
   }
 
   /**
@@ -95,12 +99,16 @@ export class ChaCha20Poly1305 {
     const fullCiphertext = new Uint8Array(requiredLen);
     fullCiphertext.set(data, 0);
     fullCiphertext.set(tag16, data.length);
+    let plain: Uint8Array | null = null;
     try {
-      const plain = cipher.decrypt(fullCiphertext);
+      plain = cipher.decrypt(fullCiphertext);
       data.set(plain);
     } catch {
       data.fill(0);
       throw new Error('Decryption failed. Check all keys.');
+    } finally {
+      fullCiphertext.fill(0);
+      if (plain) plain.fill(0);
     }
   }
 }
