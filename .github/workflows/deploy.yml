@@ -4,23 +4,20 @@ on:
   push:
     branches:
       - main
-      - fix/cascade-crypto-audit-and-verification
   workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: 'pages'
   cancel-in-progress: true
 
+env:
+  ACTIONS_RUNNER_FORCE_NODE24: 'true'
+
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -39,32 +36,10 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Deploy to gh-pages branch (Automatic Branch Publishing)
+      - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
           keep_files: false
           force_orphan: true
-
-      - name: Setup Pages
-        id: pages
-        uses: actions/configure-pages@v5
-        continue-on-error: true
-        with:
-          enablement: true
-
-      - name: Upload artifact
-        if: steps.pages.outcome == 'success'
-        uses: actions/upload-pages-artifact@v3
-        continue-on-error: true
-        with:
-          path: './dist'
-
-      - name: Deploy to GitHub Pages (Actions Environment)
-        id: deployment
-        if: steps.pages.outcome == 'success'
-        uses: actions/deploy-pages@v4
-        continue-on-error: true
-        with:
-          timeout: 120000
