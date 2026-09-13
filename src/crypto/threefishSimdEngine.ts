@@ -63,6 +63,10 @@ export class ThreefishSimdEngine {
   private constructor(wasmInstance: WebAssembly.Instance) {
     this.exports = wasmInstance.exports as unknown as ThreefishSimdEngine['exports'];
     this.memory = this.exports.memory;
+    const curPages = this.memory.buffer.byteLength >>> 16;
+    if (curPages < 20) {
+      this.memory.grow(20 - curPages);
+    }
   }
 
   public static create(keyBytes: Uint8Array, tweakBytes: Uint8Array): ThreefishSimdEngine | null {

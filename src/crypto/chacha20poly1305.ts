@@ -50,9 +50,10 @@ export class ChaCha20Poly1305 {
    * Returns 16-byte Poly1305 authentication tag
    */
   public encryptInPlace(data: Uint8Array, nonce12: Uint8Array, aad: Uint8Array = new Uint8Array()): Uint8Array {
-    const cipher = this.simdEngine
-      ? this.simdEngine.getCipher(nonce12, aad)
-      : chacha20poly1305(this.rawKey, nonce12, aad);
+    if (this.simdEngine) {
+      return this.simdEngine.encryptInPlace(data, nonce12, aad);
+    }
+    const cipher = chacha20poly1305(this.rawKey, nonce12, aad);
     const requiredLen = data.length + 16;
     const outBuf = this.encryptBuffer.length >= requiredLen
       ? this.encryptBuffer.subarray(0, requiredLen)
@@ -68,9 +69,11 @@ export class ChaCha20Poly1305 {
    * Throws constant-time error if tag verification fails
    */
   public decryptInPlace(data: Uint8Array, nonce12: Uint8Array, tag16: Uint8Array, aad: Uint8Array = new Uint8Array()): void {
-    const cipher = this.simdEngine
-      ? this.simdEngine.getCipher(nonce12, aad)
-      : chacha20poly1305(this.rawKey, nonce12, aad);
+    if (this.simdEngine) {
+      this.simdEngine.decryptInPlace(data, nonce12, tag16, aad);
+      return;
+    }
+    const cipher = chacha20poly1305(this.rawKey, nonce12, aad);
     const requiredLen = data.length + 16;
     const fullCiphertext = this.decryptBuffer.length >= requiredLen
       ? this.decryptBuffer.subarray(0, requiredLen)
