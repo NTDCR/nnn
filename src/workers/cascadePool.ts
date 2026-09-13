@@ -97,8 +97,8 @@ async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Wor
       }
     }
 
-    // Safety: ensure at least 4 workers (or candidate count) are retained
-    const minRetained = Math.min(candidateWorkers.length, 4);
+    // Safety: ensure at least 2 workers (or candidate count) are retained (supports dual P-core mobile Big.LITTLE)
+    const minRetained = Math.min(candidateWorkers.length, 2);
     while (pCoreWorkers.length < minRetained && eCoreWorkers.length > 0) {
       pCoreWorkers.push(eCoreWorkers.pop()!);
     }
@@ -111,7 +111,7 @@ async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Wor
     cachedCalibratedWorkers = pCoreWorkers.length;
     return pCoreWorkers;
   } catch {
-    cachedCalibratedWorkers = Math.min(candidateWorkers.length, 4);
+    cachedCalibratedWorkers = Math.min(candidateWorkers.length, 2);
     return candidateWorkers;
   }
 }

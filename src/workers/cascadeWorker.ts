@@ -41,7 +41,7 @@ self.onmessage = async (e: MessageEvent) => {
   if (action === 'PROBE_CORE') {
     try {
       if (!pooledEngine) throw new Error('Engine not initialized');
-      const probeBuf = new Uint8Array(65536);
+      const probeBuf = new Uint8Array(131072);
       const probeNonce = new Uint8Array(16);
 
       // Warmup pass to trigger V8 TurboFan / WebKit FTL tier-up compilation

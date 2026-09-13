@@ -308,7 +308,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
             >
               <option value="auto" className="bg-slate-900 text-slate-200">Auto (Strict P-Cores Only)</option>
               <option value="webgpu" className="bg-slate-900 text-slate-200">WebGPU (Hardware Compute)</option>
-              <option value="2" className="bg-slate-900 text-slate-200">2 P-Cores (Dual P-Core)</option>
+              <option value="2" className="bg-slate-900 text-slate-200">2 P-Cores (Dual P-Core / Mobile Big.LITTLE)</option>
               <option value="4" className="bg-slate-900 text-slate-200">4 P-Cores (Quad P-Core)</option>
               <option value="6" className="bg-slate-900 text-slate-200">6 P-Cores (Hexa P-Core)</option>
               <option value="8" className="bg-slate-900 text-slate-200">8 P-Cores (Octa P-Core Ultra)</option>
