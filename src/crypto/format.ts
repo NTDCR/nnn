@@ -59,7 +59,7 @@ async function deriveMetadataKey(key4: Uint8Array): Promise<Uint8Array> {
 /**
  * Derives a 12-byte nonce from Key 4 with optional container salt for the tail pointer
  */
-export async function derivePointerNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
+async function derivePointerNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
   const label = new TextEncoder().encode('FORTKNOX_POINTER_NONCE_V1');
   const saltLen = salt ? salt.length : 0;
   const combined = new Uint8Array(key4.length + label.length + saltLen);
@@ -74,7 +74,7 @@ export async function derivePointerNonce(key4: Uint8Array, salt?: Uint8Array): P
 /**
  * Derives a 12-byte nonce from Key 4 with optional container salt for metadata masking
  */
-export async function deriveMetadataNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
+async function deriveMetadataNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
   const label = new TextEncoder().encode('FORTKNOX_METADATA_NONCE_V1');
   const saltLen = salt ? salt.length : 0;
   const combined = new Uint8Array(key4.length + label.length + saltLen);

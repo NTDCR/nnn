@@ -42,29 +42,6 @@ export interface WorkerSuccessMessage {
   blobUrl?: string; // If streaming directly to memory or fallback
 }
 
-interface WorkerErrorMessage {
-  type: 'ERROR';
-  error: string;
-}
-
-interface WorkerChunkMessage {
-  type: 'CHUNK_OUTPUT';
-  data: ArrayBuffer;
-}
-
-interface WorkerStartMessage {
-  type: 'START';
-  totalChunks: number;
-  totalBytes: number;
-}
-
-export type WorkerMessage =
-  | WorkerProgressMessage
-  | WorkerSuccessMessage
-  | WorkerErrorMessage
-  | WorkerChunkMessage
-  | WorkerStartMessage;
-
 export interface LayerMetadata {
   order: number;
   name: string;

@@ -98,23 +98,10 @@ export function applySboxBitsliceSIMD(
   }
 }
 
-/**
- * Backward compatibility wrapper for applySboxBitslice
- */
-export function applySboxBitslice(s: number[], r0: number, r1: number, r2: number, r3: number): [number, number, number, number] {
-  let sIdx = SBOX.indexOf(s);
-  if (sIdx === -1) sIdx = 0;
-  const res: [number, number, number, number] = [0, 0, 0, 0];
-  applySboxBitsliceSIMD(sIdx, r0, r1, r2, r3, res);
-  return res;
-}
-
 export class Serpent256 {
   private subkeys: Uint32Array; // 33 subkeys of 4 words = 132 words
-  private sboxOut: [number, number, number, number] = [0, 0, 0, 0];
   private blockBuffer: Uint8Array = new Uint8Array(16);
   private blockView: DataView;
-  private blockU32: Uint32Array;
   private keystream: Uint32Array = new Uint32Array(8);
 
   constructor(keyBytes: Uint8Array) {
@@ -122,7 +109,6 @@ export class Serpent256 {
       throw new Error('Serpent-256 requires exactly 32 bytes key');
     }
     this.blockView = new DataView(this.blockBuffer.buffer);
-    this.blockU32 = new Uint32Array(this.blockBuffer.buffer);
 
     const w = new Uint32Array(140);
     const keyView = new DataView(keyBytes.buffer, keyBytes.byteOffset, keyBytes.byteLength);
@@ -414,7 +400,6 @@ export class Serpent256 {
 
   public destroy(): void {
     this.subkeys.fill(0);
-    this.sboxOut = [0, 0, 0, 0];
     this.keystream.fill(0);
     this.blockBuffer.fill(0);
   }

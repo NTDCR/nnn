@@ -31,7 +31,6 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   const [coreMode, setCoreMode] = useState<'auto' | 2 | 4>('auto');
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const workerRef = useRef<Worker | null>(null);
   const writableStreamRef = useRef<FileSystemWritableFileStream | null>(null);
   const chunksCollectorRef = useRef<Uint8Array[]>([]);
 
@@ -52,10 +51,6 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
-      }
-      if (workerRef.current) {
-        workerRef.current.terminate();
-        workerRef.current = null;
       }
       if (writableStreamRef.current) {
         try {
@@ -252,10 +247,6 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
-    }
-    if (workerRef.current) {
-      workerRef.current.terminate();
-      workerRef.current = null;
     }
     if (writableStreamRef.current) {
       writableStreamRef.current.abort().catch(() => {});

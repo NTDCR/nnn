@@ -58,13 +58,6 @@ export function fillRandomBytes(buffer: Uint8Array): void {
   }
 }
 
-/**
- * Constant-memory zeroization of sensitive key material
- */
-export function zeroizeBytes(buffer: Uint8Array): void {
-  buffer.fill(0);
-}
-
 export function generateRandomKey(byteLength: number = 32): string {
   const bytes = new Uint8Array(byteLength);
   fillRandomBytes(bytes);
