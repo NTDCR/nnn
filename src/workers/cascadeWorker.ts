@@ -53,6 +53,28 @@ self.onmessage = async (e: MessageEvent) => {
     return;
   }
 
+  if (action === 'PROBE_CORE') {
+    try {
+      if (!pooledEngine) throw new Error('Engine not initialized');
+      const probeBuf = new Uint8Array(8192);
+      const probeNonce = new Uint8Array(16);
+      const start = performance.now();
+      await pooledEngine.encryptChunk(
+        probeBuf,
+        0,
+        probeNonce,
+        probeNonce,
+        probeNonce.subarray(0, 12),
+        probeNonce.subarray(0, 12)
+      );
+      const elapsedMs = performance.now() - start;
+      self.postMessage({ type: 'PROBE_DONE', elapsedMs });
+    } catch {
+      self.postMessage({ type: 'PROBE_DONE', elapsedMs: 9999 });
+    }
+    return;
+  }
+
   if (action === 'ENCRYPT_CHUNK') {
     try {
       if (!pooledEngine) throw new Error('Engine not initialized');

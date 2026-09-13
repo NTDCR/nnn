@@ -28,14 +28,60 @@ export interface ProcessFileOptions {
   action: 'ENCRYPT' | 'DECRYPT';
   file: File;
   keys: CascadeKeys;
+  coreConcurrency?: 'auto' | 2 | 4;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
   signal?: AbortSignal;
 }
 
+// Cached core profile so calibration probe runs strictly ONCE per application session (~3ms overhead)
+let cachedCalibratedWorkers: number | null = null;
+
+async function calibrateWorkerPool(candidateWorkers: Worker[]): Promise<number> {
+  if (cachedCalibratedWorkers !== null) {
+    return cachedCalibratedWorkers;
+  }
+
+  try {
+    const probePromises = candidateWorkers.map(
+      (w) =>
+        new Promise<number>((resolve) => {
+          const handler = (e: MessageEvent) => {
+            if (e.data.type === 'PROBE_DONE') {
+              w.removeEventListener('message', handler);
+              resolve(typeof e.data.elapsedMs === 'number' ? e.data.elapsedMs : 9999);
+            }
+          };
+          w.addEventListener('message', handler);
+          w.postMessage({ action: 'PROBE_CORE' });
+        })
+    );
+
+    // Timeout safety fallback of 350ms
+    const timeout = new Promise<number[]>((resolve) =>
+      setTimeout(() => resolve([50, 50, 50, 50]), 350)
+    );
+
+    const results = await Promise.race([Promise.all(probePromises), timeout]);
+    const sorted = [...results].sort((a, b) => a - b);
+    const fastest = sorted[0];
+    const fourth = sorted[3];
+
+    // If the 4th worker executes within 1.85x of the fastest worker,
+    // all 4 cores are true high-throughput Performance Cores (e.g. Dimensity 9300, Snapdragon 8 Elite, Tensor G4, or Desktop)!
+    const isAllPerformanceCores = fourth <= Math.max(1.0, fastest) * 1.85;
+
+    cachedCalibratedWorkers = isAllPerformanceCores ? 4 : 2;
+  } catch {
+    cachedCalibratedWorkers = 2;
+  }
+
+  return cachedCalibratedWorkers;
+}
+
 export async function processFileWithPool(options: ProcessFileOptions): Promise<WorkerSuccessMessage> {
-  const { action, file, keys, onStart, onProgress, onChunkOutput, signal } = options;
+  const { action, file, keys, coreConcurrency, onStart, onProgress, onChunkOutput, signal } = options;
 
   let k1: Uint8Array | null = null;
   let k2: Uint8Array | null = null;
@@ -50,17 +96,30 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
     k3 = hexToBytes(keys.layer3ChaChaHex, 32);
     k4 = hexToBytes(keys.layer4AesHex, 32);
 
-    // Adaptive mobile-aware pool sizing:
-    // Mobile CPUs have heterogenous big.LITTLE architectures (typically 2 Big/Performance cores + 4-6 Little cores).
-    // Using >2 workers on mobile spills onto slow Little cores causing severe Head-of-Line blocking and thermal throttling.
-    // Desktop systems have 4-16 uniform high-performance cores, scaling cleanly to 4 workers.
     const isMultiChunk = file.size > CHUNK_SIZE;
-    const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-    const maxWorkers = isMobile ? 2 : Math.min(4, Math.max(2, (navigator?.hardwareConcurrency || 4) >> 1));
-    const poolSize = isMultiChunk ? maxWorkers : 1;
+    const hardwareConcurrency = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
 
-    // Instantiate and initialize worker pool
-    for (let i = 0; i < poolSize; i++) {
+    let targetWorkerCount: number;
+    if (!isMultiChunk) {
+      targetWorkerCount = 1;
+    } else if (coreConcurrency === 2) {
+      targetWorkerCount = 2;
+    } else if (coreConcurrency === 4) {
+      targetWorkerCount = 4;
+    } else {
+      // 'auto' mode:
+      if (hardwareConcurrency < 4) {
+        targetWorkerCount = 2;
+      } else if (cachedCalibratedWorkers !== null) {
+        targetWorkerCount = cachedCalibratedWorkers;
+      } else {
+        // Instantiate 4 candidate workers, probe them, and calibrate
+        targetWorkerCount = 4;
+      }
+    }
+
+    // Instantiate worker pool
+    for (let i = 0; i < targetWorkerCount; i++) {
       const w = new Worker(new URL('./cascadeWorker.ts', import.meta.url), { type: 'module' });
       workers.push(w);
     }
@@ -85,6 +144,20 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
         })
     );
     await Promise.all(initPromises);
+
+    if (signal?.aborted) throw new Error('Aborted');
+
+    // If in auto mode with 4 candidate workers and not yet calibrated, run the 3ms micro-calibration probe
+    if (isMultiChunk && workers.length === 4 && cachedCalibratedWorkers === null && (!coreConcurrency || coreConcurrency === 'auto')) {
+      const calibratedCount = await calibrateWorkerPool(workers);
+      if (calibratedCount === 2) {
+        // Slow Little cores detected! Terminate workers 2 & 3 to prevent Head-of-Line blocking
+        const w3 = workers.pop();
+        w3?.terminate();
+        const w2 = workers.pop();
+        w2?.terminate();
+      }
+    }
 
     if (signal?.aborted) throw new Error('Aborted');
 
