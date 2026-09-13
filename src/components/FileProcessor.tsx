@@ -43,17 +43,22 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   const abortControllerRef = useRef<AbortController | null>(null);
   const writableStreamRef = useRef<FileSystemWritableFileStream | null>(null);
   const chunksCollectorRef = useRef<Uint8Array[]>([]);
+  const activeBlobUrlsRef = useRef<Set<string>>(new Set());
 
   const hasFileSystemAccess = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
 
-  // Cleanup object URL on unmount
-  useEffect(() => {
-    return () => {
-      if (downloadBlobUrl) {
-        URL.revokeObjectURL(downloadBlobUrl);
+  const safeRevokeBlobUrl = (urlToRevoke: string, delayMs: number = 90000) => {
+    if (!urlToRevoke) return;
+    activeBlobUrlsRef.current.add(urlToRevoke);
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(urlToRevoke);
+      } catch {
+        // Ignore revocation errors
       }
-    };
-  }, [downloadBlobUrl]);
+      activeBlobUrlsRef.current.delete(urlToRevoke);
+    }, delayMs);
+  };
 
   // Comprehensive unmount cleanup for active worker, pool and open file streams
   useEffect(() => {
@@ -71,12 +76,23 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
         writableStreamRef.current = null;
       }
       chunksCollectorRef.current = [];
+      // Delayed cleanup for any active blob URLs so in-flight browser downloads (e.g. Firefox) are not abruptly aborted
+      activeBlobUrlsRef.current.forEach((url) => {
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch {
+            // Ignore
+          }
+        }, 60000);
+      });
+      activeBlobUrlsRef.current.clear();
     };
   }, []);
 
   const clearDownloadUrl = () => {
     setDownloadBlobUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
+      if (prev) safeRevokeBlobUrl(prev, 60000);
       return null;
     });
   };
@@ -146,7 +162,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
         /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent) ||
         Boolean((navigator as unknown as { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile)
       );
-      const maxSafeBytes = isMobileBrowser ? 1.2 * 1024 * 1024 * 1024 : 2.2 * 1024 * 1024 * 1024;
+      const maxSafeBytes = isMobileBrowser ? 800 * 1024 * 1024 : 1500 * 1024 * 1024;
       if (selectedFile.size > maxSafeBytes) {
         setError(
           `Memory limit notice: In-memory fallback cannot safely buffer files larger than ${(maxSafeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB without risk of browser tab crash. Please enable "Direct-to-Disk Stream" on a desktop Chromium browser (Chrome/Edge) for large files.`
@@ -278,32 +294,50 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
         }
         writableStreamRef.current = null;
       } else {
-        const blob = new Blob(chunksCollectorRef.current as BlobPart[], {
+        const blobParts = chunksCollectorRef.current as BlobPart[];
+        chunksCollectorRef.current = [];
+        const blob = new Blob(blobParts, {
           type: 'application/octet-stream',
         });
         const url = URL.createObjectURL(blob);
         setDownloadBlobUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
+          if (prev) safeRevokeBlobUrl(prev, 60000);
           return url;
         });
-        chunksCollectorRef.current = [];
 
-        // Automatically trigger download fallback for browsers without direct disk write API
-        try {
-          const anchor = document.createElement('a');
-          anchor.href = url;
-          anchor.download = res.fileName;
-          anchor.style.display = 'none';
-          document.body.appendChild(anchor);
-          anchor.click();
-          setTimeout(() => {
-            if (document.body.contains(anchor)) {
-              document.body.removeChild(anchor);
-            }
-          }, 1000);
-        } catch (downloadErr) {
-          console.warn('Auto-download trigger fallback failed:', downloadErr);
-        }
+        // Automatically trigger download fallback for browsers without direct disk write API (Firefox, Safari)
+        // Decoupled from current React microtask to allow UI state update, using off-screen frame and MouseEvent
+        setTimeout(() => {
+          try {
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = res.fileName;
+            anchor.rel = 'noopener';
+            // Avoid display: none because Gecko (Firefox) does not construct a layout frame for hidden elements
+            anchor.style.position = 'fixed';
+            anchor.style.left = '-9999px';
+            anchor.style.top = '-9999px';
+            anchor.style.opacity = '0';
+            anchor.style.pointerEvents = 'none';
+            document.body.appendChild(anchor);
+
+            // Dispatch full synthetic MouseEvent for cross-browser stability without top-level navigation
+            const clickEvent = new MouseEvent('click', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+            });
+            anchor.dispatchEvent(clickEvent);
+
+            setTimeout(() => {
+              if (document.body.contains(anchor)) {
+                document.body.removeChild(anchor);
+              }
+            }, 5000);
+          } catch (downloadErr) {
+            console.warn('Auto-download trigger fallback failed:', downloadErr);
+          }
+        }, 150);
       }
 
       setResult(res);
@@ -527,6 +561,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
               <a
                 href={downloadBlobUrl}
                 download={result.fileName}
+                rel="noopener"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition"
               >
                 <Download className="w-3.5 h-3.5" />

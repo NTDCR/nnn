@@ -170,14 +170,26 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     const a = document.createElement('a');
     a.href = url;
     a.download = `fortknox_keys_${Date.now()}.json`;
-    a.style.display = 'none';
+    a.rel = 'noopener';
+    a.style.position = 'fixed';
+    a.style.left = '-9999px';
+    a.style.top = '-9999px';
+    a.style.opacity = '0';
+    a.style.pointerEvents = 'none';
     document.body.appendChild(a);
-    a.click();
+    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+    a.dispatchEvent(clickEvent);
     setTimeout(() => {
       if (document.body.contains(a)) {
         document.body.removeChild(a);
       }
-      URL.revokeObjectURL(url);
+      setTimeout(() => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Ignore
+        }
+      }, 30000);
     }, 1500);
   };
 
