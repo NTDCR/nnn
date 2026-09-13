@@ -28,11 +28,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   const [useDirectDiskWrite, setUseDirectDiskWrite] = useState<boolean>(true);
   const [downloadBlobUrl, setDownloadBlobUrl] = useState<string | null>(null);
   const [streamedDirectToDisk, setStreamedDirectToDisk] = useState<boolean>(false);
-  const [coreMode, setCoreMode] = useState<'auto' | 2 | 4>(() => {
+  const [coreMode, setCoreMode] = useState<'auto' | 2 | 4 | 6 | 8>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
       const saved = localStorage.getItem('fortknox_core_mode');
       if (saved === '2') return 2;
       if (saved === '4') return 4;
+      if (saved === '6') return 6;
+      if (saved === '8') return 8;
     }
     return 'auto';
   });
@@ -286,7 +288,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
             <select
               value={coreMode}
               onChange={(e) => {
-                const nextMode = e.target.value === 'auto' ? 'auto' : (Number(e.target.value) as 2 | 4);
+                const nextMode = e.target.value === 'auto' ? 'auto' : (Number(e.target.value) as 2 | 4 | 6 | 8);
                 setCoreMode(nextMode);
                 if (typeof window !== 'undefined' && window.localStorage) {
                   localStorage.setItem('fortknox_core_mode', String(nextMode));
@@ -297,7 +299,9 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
             >
               <option value="auto" className="bg-slate-900 text-slate-200">Auto (Smart Probe)</option>
               <option value="2" className="bg-slate-900 text-slate-200">2 Cores (Mobile Standard)</option>
-              <option value="4" className="bg-slate-900 text-slate-200">4 Cores (Flagship / Desktop)</option>
+              <option value="4" className="bg-slate-900 text-slate-200">4 Cores (Quad-Core Performance)</option>
+              <option value="6" className="bg-slate-900 text-slate-200">6 Cores (Hexa-Core Performance)</option>
+              <option value="8" className="bg-slate-900 text-slate-200">8 Cores (Octa-Core Ultra 100+ MB/s)</option>
             </select>
           </div>
 

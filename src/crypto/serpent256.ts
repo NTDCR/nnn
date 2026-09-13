@@ -98,8 +98,11 @@ export function applySboxBitsliceSIMD(
   }
 }
 
+import { SerpentSimdEngine } from './serpentSimdEngine.ts';
+
 export class Serpent256 {
   private subkeys: Uint32Array; // 33 subkeys of 4 words = 132 words
+  private simdEngine: SerpentSimdEngine | null = null;
   private blockBuffer: Uint8Array = new Uint8Array(16);
   private blockView: DataView;
   private keystream: Uint32Array = new Uint32Array(8);
@@ -143,6 +146,8 @@ export class Serpent256 {
       this.subkeys[i * 4 + 2] = skOut[2];
       this.subkeys[i * 4 + 3] = skOut[3];
     }
+
+    this.simdEngine = SerpentSimdEngine.create(keyBytes);
   }
 
   /**
@@ -331,6 +336,12 @@ export class Serpent256 {
     if (baseNonce.length < 8) {
       throw new Error('Serpent-256 base nonce must be at least 8 bytes');
     }
+
+    if (this.simdEngine) {
+      this.simdEngine.processCtr(data, baseNonce, chunkIndex);
+      return;
+    }
+
     const BLOCK_SIZE = 16;
     const TWO_BLOCKS = 32;
     const blocksInChunk = Math.ceil(data.length / BLOCK_SIZE);
@@ -376,11 +387,11 @@ export class Serpent256 {
       offset += TWO_BLOCKS;
     }
 
-    if (offset < data.length) {
+    while (offset < data.length) {
       const cLow = Number(counter & 0xFFFFFFFFn) >>> 0;
       const cHigh = Number((counter >> 32n) & 0xFFFFFFFFn) >>> 0;
       this.encryptTwo(n0, n1, cLow, cHigh, 0, 0, 0, 0, keystream, 0);
-      const rem = data.length - offset;
+      const rem = Math.min(BLOCK_SIZE, data.length - offset);
       if (rem === BLOCK_SIZE && dataU32) {
         const w = offset >>> 2;
         dataU32[w] ^= keystream[0];
@@ -393,12 +404,18 @@ export class Serpent256 {
           data[offset + i] ^= ksU8[i];
         }
       }
+      counter += 1n;
+      offset += BLOCK_SIZE;
     }
     this.blockBuffer.fill(0);
     keystream.fill(0);
   }
 
   public destroy(): void {
+    if (this.simdEngine) {
+      this.simdEngine.destroy();
+      this.simdEngine = null;
+    }
     this.subkeys.fill(0);
     this.keystream.fill(0);
     this.blockBuffer.fill(0);

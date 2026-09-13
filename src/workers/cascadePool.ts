@@ -28,7 +28,7 @@ export interface ProcessFileOptions {
   action: 'ENCRYPT' | 'DECRYPT';
   file: File;
   keys: CascadeKeys;
-  coreConcurrency?: 'auto' | 2 | 4;
+  coreConcurrency?: 'auto' | 2 | 4 | 6 | 8;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
@@ -59,20 +59,30 @@ async function calibrateWorkerPool(candidateWorkers: Worker[]): Promise<number> 
     );
 
     // Timeout safety fallback of 350ms
+    const fallback = candidateWorkers.map(() => 50);
     const timeout = new Promise<number[]>((resolve) =>
-      setTimeout(() => resolve([50, 50, 50, 50]), 350)
+      setTimeout(() => resolve(fallback), 350)
     );
 
     const results = await Promise.race([Promise.all(probePromises), timeout]);
     const sorted = [...results].sort((a, b) => a - b);
-    const fastest = sorted[0];
-    const fourth = sorted[3];
+    const fastest = Math.max(1.0, sorted[0]);
 
-    // If the 4th worker executes within 2.3x of the fastest worker,
-    // all 4 cores are true high-throughput Performance Cores (e.g. Dimensity 9300, Snapdragon 8 Elite, Tensor G4, or Desktop)!
-    const isAllPerformanceCores = fourth <= Math.max(1.0, fastest) * 2.3;
+    // Count how many cores perform within 2.3x of the fastest core
+    // (Filtering out efficiency/LITTLE cores that would cause Head-of-Line blocking)
+    let fastCount = 0;
+    for (const time of sorted) {
+      if (time <= fastest * 2.3) {
+        fastCount++;
+      }
+    }
 
-    cachedCalibratedWorkers = isAllPerformanceCores ? 4 : 2;
+    // Ensure an even count: clamp between 2 and candidateWorkers.length (e.g. 2, 4, 6, 8)
+    if (fastCount > 2 && fastCount % 2 !== 0) {
+      fastCount -= 1;
+    }
+    const finalCount = Math.max(2, Math.min(candidateWorkers.length, fastCount));
+    cachedCalibratedWorkers = finalCount;
   } catch {
     cachedCalibratedWorkers = 2;
   }
@@ -102,10 +112,8 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
     let targetWorkerCount: number;
     if (!isMultiChunk) {
       targetWorkerCount = 1;
-    } else if (coreConcurrency === 2) {
-      targetWorkerCount = 2;
-    } else if (coreConcurrency === 4) {
-      targetWorkerCount = 4;
+    } else if (coreConcurrency === 2 || coreConcurrency === 4 || coreConcurrency === 6 || coreConcurrency === 8) {
+      targetWorkerCount = coreConcurrency;
     } else {
       // 'auto' mode:
       if (hardwareConcurrency < 4) {
@@ -113,8 +121,9 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
       } else if (cachedCalibratedWorkers !== null) {
         targetWorkerCount = cachedCalibratedWorkers;
       } else {
-        // Instantiate 4 candidate workers, probe them, and calibrate
-        targetWorkerCount = 4;
+        // Probe candidate workers up to hardware capacity (capped at 8)
+        const candidates = hardwareConcurrency >= 8 ? 8 : (hardwareConcurrency >= 6 ? 6 : 4);
+        targetWorkerCount = candidates;
       }
     }
 
@@ -147,15 +156,12 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     if (signal?.aborted) throw new Error('Aborted');
 
-    // If in auto mode with 4 candidate workers and not yet calibrated, run the 3ms micro-calibration probe
-    if (isMultiChunk && workers.length === 4 && cachedCalibratedWorkers === null && (!coreConcurrency || coreConcurrency === 'auto')) {
+    // If in auto mode with candidate workers > 2 and not yet calibrated, run the micro-calibration probe
+    if (isMultiChunk && workers.length > 2 && cachedCalibratedWorkers === null && (!coreConcurrency || coreConcurrency === 'auto')) {
       const calibratedCount = await calibrateWorkerPool(workers);
-      if (calibratedCount === 2) {
-        // Slow Little cores detected! Terminate workers 2 & 3 to prevent Head-of-Line blocking
-        const w3 = workers.pop();
-        w3?.terminate();
-        const w2 = workers.pop();
-        w2?.terminate();
+      while (workers.length > calibratedCount) {
+        const excessWorker = workers.pop();
+        excessWorker?.terminate();
       }
     }
 
@@ -286,8 +292,9 @@ async function executePoolEncryption(params: {
       const idx = nextDispatchChunk++;
 
       // Trigger background read-ahead prefetching for upcoming chunks
-      if (idx + 1 < chunkCount) getChunkSlice(idx + 1);
-      if (idx + 2 < chunkCount) getChunkSlice(idx + 2);
+      for (let p = 1; p <= 4; p++) {
+        if (idx + p < chunkCount) getChunkSlice(idx + p);
+      }
 
       const rawBuffer = await getChunkSlice(idx);
       slicePrefetchMap.delete(idx);
@@ -516,8 +523,9 @@ async function executePoolDecryption(params: {
       const idx = nextDispatchChunk++;
 
       // Trigger background read-ahead prefetching for upcoming chunks
-      if (idx + 1 < chunkCount) getEncChunkSlice(idx + 1);
-      if (idx + 2 < chunkCount) getEncChunkSlice(idx + 2);
+      for (let p = 1; p <= 4; p++) {
+        if (idx + p < chunkCount) getEncChunkSlice(idx + p);
+      }
 
       const encBuffer = await getEncChunkSlice(idx);
       slicePrefetchMap.delete(idx);
