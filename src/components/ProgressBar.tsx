@@ -17,7 +17,7 @@ const LAYER_NAMES = [
 export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) => {
   const percent = progress.totalBytes > 0
     ? Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))
-    : 0;
+    : (progress.currentChunk === progress.totalChunks ? 100 : 0);
 
   return (
     <div id="cascade-progress-card" className="rounded-xl bg-slate-900 border border-slate-800 p-5 shadow-xl">

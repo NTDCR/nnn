@@ -41,10 +41,14 @@ export function hexToBytes(hex: string, expectedBytes?: number): Uint8Array {
   return bytes;
 }
 
+const HEX_TABLE = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
+
 export function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += HEX_TABLE[bytes[i]];
+  }
+  return hex;
 }
 
 /**
@@ -68,6 +72,7 @@ export function generateRandomKey(byteLength: number = 32): string {
 export function calculateEntropyScore(hex: string, expectedBits: number = 256): { bits: number; label: string; color: string } {
   if (!hex) return { bits: 0, label: 'Missing', color: 'text-rose-400' };
   const clean = hex.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '');
+  if (!clean) return { bits: 0, label: 'Missing', color: 'text-rose-400' };
   if (!/^[0-9a-fA-F]*$/.test(clean)) {
     return { bits: 0, label: 'Invalid hex character', color: 'text-rose-400' };
   }
@@ -90,9 +95,24 @@ export function calculateEntropyScore(hex: string, expectedBits: number = 256): 
     }
   }
 
+  // Detect periodic repeating patterns (e.g. cycles like "0123456789abcdef..." or "abab...")
+  const lowerHex = clean.toLowerCase();
+  for (let p = 1; p <= Math.floor(lowerHex.length / 2); p++) {
+    if (lowerHex.length % p === 0) {
+      const pattern = lowerHex.slice(0, p);
+      if (pattern.repeat(lowerHex.length / p) === lowerHex) {
+        return {
+          bits: Math.min(32, Math.floor(expectedBits * 0.1)),
+          label: 'Low Entropy (Repeating pattern)',
+          color: 'text-amber-400',
+        };
+      }
+    }
+  }
+
   // Calculate Shannon entropy over nibbles
   const counts: { [char: string]: number } = {};
-  for (const c of clean.toLowerCase()) {
+  for (const c of lowerHex) {
     counts[c] = (counts[c] || 0) + 1;
   }
   let entropy = 0;
@@ -125,8 +145,12 @@ export class CascadePipeline {
   private chacha: ChaCha20Poly1305;
   private aes: Aes256Gcm;
   private unifiedEngine: UnifiedCascadeEngine | null = null;
-  private aadBuf: Uint8Array = new Uint8Array(8);
-  private aadView: DataView;
+
+  private getChunkAad(chunkIndex: number): Uint8Array {
+    const aad = new Uint8Array(8);
+    new DataView(aad.buffer).setBigUint64(0, BigInt(chunkIndex), true);
+    return aad;
+  }
 
   constructor(
     key1: Uint8Array | string,
@@ -134,7 +158,6 @@ export class CascadePipeline {
     key3: Uint8Array | string,
     key4: Uint8Array | string
   ) {
-    this.aadView = new DataView(this.aadBuf.buffer);
     const k1 = typeof key1 === 'string' ? hexToBytes(key1, 128) : key1;
     const k2 = typeof key2 === 'string' ? hexToBytes(key2, 32) : key2;
     const k3 = typeof key3 === 'string' ? hexToBytes(key3, 32) : key3;
@@ -152,12 +175,30 @@ export class CascadePipeline {
       0x68, 0x54, 0x77, 0x65, 0x61, 0x6b, 0x31, 0x36
     ]);
 
-    this.threefish = new Threefish1024(k1, tweak);
-    this.serpent = new Serpent256(k2);
-    this.chacha = new ChaCha20Poly1305(k3);
-    this.aes = new Aes256Gcm(k4);
+    try {
+      this.threefish = new Threefish1024(k1, tweak);
+      this.serpent = new Serpent256(k2);
+      this.chacha = new ChaCha20Poly1305(k3);
+      this.aes = new Aes256Gcm(k4);
 
-    this.unifiedEngine = UnifiedCascadeEngine.create(k1, tweak, k2, k3);
+      this.unifiedEngine = UnifiedCascadeEngine.create(k1, tweak, k2, k3);
+    } catch (err) {
+      if (this.unifiedEngine) {
+        this.unifiedEngine.destroy();
+        this.unifiedEngine = null;
+      }
+      if (this.aes) this.aes.destroy();
+      if (this.chacha) this.chacha.destroy();
+      if (this.serpent) this.serpent.destroy();
+      if (this.threefish) this.threefish.destroy();
+      throw err;
+    } finally {
+      tweak.fill(0);
+      if (typeof key1 === 'string') k1.fill(0);
+      if (typeof key2 === 'string') k2.fill(0);
+      if (typeof key3 === 'string') k3.fill(0);
+      if (typeof key4 === 'string') k4.fill(0);
+    }
   }
 
   /**
@@ -174,7 +215,7 @@ export class CascadePipeline {
     inPlace: boolean = true
   ): Promise<{ ciphertext: Uint8Array; tagChaCha: Uint8Array; tagAes: Uint8Array }> {
     const work = inPlace ? chunkData : new Uint8Array(chunkData);
-    this.aadView.setBigUint64(0, BigInt(chunkIndex), true);
+    const aadBuf = this.getChunkAad(chunkIndex);
 
     let tagChaCha: Uint8Array;
     if (this.unifiedEngine) {
@@ -185,7 +226,7 @@ export class CascadePipeline {
         nonceSerpent,
         chunkNonceChaCha,
         chunkIndex,
-        this.aadBuf
+        aadBuf
       );
     } else {
       // Layer 1: Threefish-1024 CTR
@@ -196,12 +237,12 @@ export class CascadePipeline {
 
       // Layer 3: ChaCha20-Poly1305 AEAD
       const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
-      tagChaCha = this.chacha.encryptInPlace(work, chunkNonceChaCha, this.aadBuf);
+      tagChaCha = this.chacha.encryptInPlace(work, chunkNonceChaCha, aadBuf);
     }
 
     // Layer 4: AES-256-GCM AEAD
     const chunkNonceAes = this.aes.deriveChunkNonce(nonceAes, chunkIndex);
-    const aesResult = await this.aes.encrypt(work, chunkNonceAes, this.aadBuf);
+    const aesResult = await this.aes.encrypt(work, chunkNonceAes, aadBuf);
 
     return {
       ciphertext: aesResult.ciphertext,
@@ -223,12 +264,13 @@ export class CascadePipeline {
     tagChaCha: Uint8Array,
     tagAes: Uint8Array
   ): Promise<Uint8Array> {
+    let afterAes: Uint8Array | null = null;
     try {
-      this.aadView.setBigUint64(0, BigInt(chunkIndex), true);
+      const aadBuf = this.getChunkAad(chunkIndex);
 
       // Layer 4: AES-256-GCM AEAD (reverse 1)
       const chunkNonceAes = this.aes.deriveChunkNonce(nonceAes, chunkIndex);
-      const afterAes = await this.aes.decrypt(ciphertext, chunkNonceAes, tagAes, this.aadBuf);
+      afterAes = await this.aes.decrypt(ciphertext, chunkNonceAes, tagAes, aadBuf);
 
       if (this.unifiedEngine) {
         const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
@@ -239,12 +281,12 @@ export class CascadePipeline {
           chunkNonceChaCha,
           chunkIndex,
           tagChaCha,
-          this.aadBuf
+          aadBuf
         );
       } else {
         // Layer 3: ChaCha20-Poly1305 AEAD (reverse 2) - decrypt in place directly in afterAes buffer
         const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
-        this.chacha.decryptInPlace(afterAes, chunkNonceChaCha, tagChaCha, this.aadBuf);
+        this.chacha.decryptInPlace(afterAes, chunkNonceChaCha, tagChaCha, aadBuf);
 
         // Layer 2: Serpent-256 CTR (reverse 3)
         this.serpent.processCtr(afterAes, nonceSerpent, chunkIndex);
@@ -255,6 +297,9 @@ export class CascadePipeline {
 
       return afterAes;
     } catch {
+      if (afterAes) {
+        afterAes.fill(0);
+      }
       throw new Error(GENERIC_DECRYPT_ERROR);
     }
   }
@@ -271,12 +316,13 @@ export class CascadePipeline {
     nonceAes: Uint8Array,
     tagChaCha: Uint8Array
   ): Promise<Uint8Array> {
+    let afterAes: Uint8Array | null = null;
     try {
-      this.aadView.setBigUint64(0, BigInt(chunkIndex), true);
+      const aadBuf = this.getChunkAad(chunkIndex);
 
       // Layer 4: AES-256-GCM AEAD (reverse 1) with zero staging copy
       const chunkNonceAes = this.aes.deriveChunkNonce(nonceAes, chunkIndex);
-      const afterAes = await this.aes.decryptContiguous(contiguousCipherAndTag, chunkNonceAes, this.aadBuf);
+      afterAes = await this.aes.decryptContiguous(contiguousCipherAndTag, chunkNonceAes, aadBuf);
 
       if (this.unifiedEngine) {
         const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
@@ -287,12 +333,12 @@ export class CascadePipeline {
           chunkNonceChaCha,
           chunkIndex,
           tagChaCha,
-          this.aadBuf
+          aadBuf
         );
       } else {
         // Layer 3: ChaCha20-Poly1305 AEAD (reverse 2) - decrypt in place directly in afterAes buffer
         const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
-        this.chacha.decryptInPlace(afterAes, chunkNonceChaCha, tagChaCha, this.aadBuf);
+        this.chacha.decryptInPlace(afterAes, chunkNonceChaCha, tagChaCha, aadBuf);
 
         // Layer 2: Serpent-256 CTR (reverse 3)
         this.serpent.processCtr(afterAes, nonceSerpent, chunkIndex);
@@ -303,6 +349,9 @@ export class CascadePipeline {
 
       return afterAes;
     } catch {
+      if (afterAes) {
+        afterAes.fill(0);
+      }
       throw new Error(GENERIC_DECRYPT_ERROR);
     }
   }
@@ -316,6 +365,5 @@ export class CascadePipeline {
     this.serpent.destroy();
     this.chacha.destroy();
     this.aes.destroy();
-    this.aadBuf.fill(0);
   }
 }

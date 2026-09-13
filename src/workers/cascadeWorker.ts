@@ -24,12 +24,16 @@ self.onmessage = async (e: MessageEvent) => {
   const action = data.action;
 
   if (action === 'INIT_POOL') {
+    let k1: Uint8Array | null = null;
+    let k2: Uint8Array | null = null;
+    let k3: Uint8Array | null = null;
+    let k4: Uint8Array | null = null;
     try {
       const keys = data.keys;
-      const k1 = hexToBytes(keys.layer1ThreefishHex, 128);
-      const k2 = hexToBytes(keys.layer2SerpentHex, 32);
-      const k3 = hexToBytes(keys.layer3ChaChaHex, 32);
-      const k4 = hexToBytes(keys.layer4AesHex, 32);
+      k1 = hexToBytes(keys.layer1ThreefishHex, 128);
+      k2 = hexToBytes(keys.layer2SerpentHex, 32);
+      k3 = hexToBytes(keys.layer3ChaChaHex, 32);
+      k4 = hexToBytes(keys.layer4AesHex, 32);
       pooledEngine = await createCascadeEngine(k1, k2, k3, k4);
 
       // Micro-warmup pass to tier up V8 TurboFan / WebAssembly for immediate peak bidirectional speed
@@ -57,6 +61,11 @@ self.onmessage = async (e: MessageEvent) => {
       self.postMessage({ type: 'POOL_READY' });
     } catch (err: unknown) {
       self.postMessage({ type: 'ERROR', error: err instanceof Error ? err.message : 'Pool init failed' });
+    } finally {
+      k1?.fill(0);
+      k2?.fill(0);
+      k3?.fill(0);
+      k4?.fill(0);
     }
     return;
   }
@@ -110,6 +119,9 @@ self.onmessage = async (e: MessageEvent) => {
       if (!pooledEngine) throw new Error('Engine not initialized');
       const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes } = data;
       const chunkWithTags = new Uint8Array(chunkData);
+      if (chunkWithTags.length < ENCRYPTED_CHUNK_SIZE) {
+        throw new Error('Invalid chunk buffer size');
+      }
       const chunkSlice = chunkWithTags.subarray(0, CHUNK_SIZE);
       const { ciphertext, tagChaCha, tagAes } = await pooledEngine.encryptChunk(
         chunkSlice,
@@ -143,7 +155,7 @@ self.onmessage = async (e: MessageEvent) => {
       if (!pooledEngine) throw new Error('Engine not initialized');
       const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes } = data;
       const chunkWithTags = new Uint8Array(chunkData);
-      if (chunkWithTags.length < ENCRYPTED_CHUNK_SIZE) {
+      if (chunkWithTags.length !== ENCRYPTED_CHUNK_SIZE) {
         throw new Error(GENERIC_DECRYPT_ERROR);
       }
       let plain: Uint8Array;

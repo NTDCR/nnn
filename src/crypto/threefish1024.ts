@@ -111,6 +111,11 @@ export class Threefish1024 {
       this.subkeys[s] = sk;
     }
 
+    kwLow.fill(0);
+    kwHigh.fill(0);
+    twLow.fill(0);
+    twHigh.fill(0);
+
     this.simdEngine = ThreefishSimdEngine.create(keyBytes, tweakBytes);
   }
 
@@ -389,8 +394,11 @@ export class Threefish1024 {
    * Operates on native 32-bit CPU register words with 4-way superscalar interleaving.
    */
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
-    if (baseNonce.length < 16) {
-      throw new Error('Threefish-1024 base nonce must be at least 16 bytes');
+    if (baseNonce.length !== 16) {
+      throw new Error('Threefish-1024 CTR requires strictly a 16-byte nonce.');
+    }
+    if (chunkIndex < 0 || !Number.isSafeInteger(chunkIndex)) {
+      throw new Error('Invalid chunk index');
     }
 
     if (this.simdEngine) {
@@ -400,8 +408,8 @@ export class Threefish1024 {
 
     const BLOCK_SIZE = 128;
     const FOUR_BLOCKS = 512;
-    const blocksInChunk = Math.ceil(data.length / BLOCK_SIZE);
-    let counter = BigInt(chunkIndex) * BigInt(blocksInChunk);
+    const BLOCKS_PER_CHUNK = 8192; // 1048576 / BLOCK_SIZE (fixed 1 MB chunk coordinate space)
+    let counter = BigInt(chunkIndex) * BigInt(BLOCKS_PER_CHUNK);
 
     const nonceView = new DataView(baseNonce.buffer, baseNonce.byteOffset, 16);
     const n0 = nonceView.getUint32(0, true);

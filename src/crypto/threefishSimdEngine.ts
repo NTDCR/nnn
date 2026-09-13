@@ -70,6 +70,9 @@ export class ThreefishSimdEngine {
   }
 
   public static create(keyBytes: Uint8Array, tweakBytes: Uint8Array): ThreefishSimdEngine | null {
+    if (keyBytes.length !== 128 || tweakBytes.length !== 16) {
+      return null;
+    }
     try {
       const wasmModule = getWasmModule();
       if (!wasmModule) return null;
@@ -91,6 +94,9 @@ export class ThreefishSimdEngine {
   }
 
   private init(keyBytes: Uint8Array, tweakBytes: Uint8Array): void {
+    if (keyBytes.length !== 128 || tweakBytes.length !== 16) {
+      throw new Error('Threefish-1024 requires strictly a 128-byte key and a 16-byte tweak.');
+    }
     this.ensureCapacity(DATA_OFFSET + 1024);
     const memU8 = new Uint8Array(this.memory.buffer);
     memU8.set(keyBytes, KEY_OFFSET);
@@ -107,6 +113,12 @@ export class ThreefishSimdEngine {
   }
 
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
+    if (baseNonce.length !== 16) {
+      throw new Error('Threefish-1024 CTR requires strictly a 16-byte nonce.');
+    }
+    if (chunkIndex < 0 || !Number.isSafeInteger(chunkIndex)) {
+      throw new Error('Invalid chunk index');
+    }
     const dataLen = data.length;
     const requiredBytes = DATA_OFFSET + dataLen;
     this.ensureCapacity(requiredBytes);
@@ -123,7 +135,7 @@ export class ThreefishSimdEngine {
   public destroy(): void {
     try {
       const memU8 = new Uint8Array(this.memory.buffer);
-      memU8.fill(0, BASE_OFFSET, DATA_OFFSET + 1024);
+      memU8.fill(0);
     } catch {
       // Ignore cleanup error
     }

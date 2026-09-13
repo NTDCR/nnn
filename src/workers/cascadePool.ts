@@ -59,27 +59,41 @@ async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Wor
     const probePromises = candidateWorkers.map(
       (w) =>
         new Promise<WorkerProbeResult>((resolve) => {
+          const cleanup = () => {
+            w.removeEventListener('message', handler);
+            w.removeEventListener('error', errHandler);
+          };
           const handler = (e: MessageEvent) => {
-            if (e.data.type === 'PROBE_DONE') {
-              w.removeEventListener('message', handler);
+            if (e.data?.type === 'PROBE_DONE') {
+              cleanup();
               resolve({
                 worker: w,
                 elapsedMs: typeof e.data.elapsedMs === 'number' ? e.data.elapsedMs : 9999,
               });
             }
           };
+          const errHandler = () => {
+            cleanup();
+            resolve({
+              worker: w,
+              elapsedMs: 9999,
+            });
+          };
           w.addEventListener('message', handler);
+          w.addEventListener('error', errHandler, { once: true });
           w.postMessage({ action: 'PROBE_CORE' });
         })
     );
 
     // Timeout safety fallback of 1500ms
     const fallback = candidateWorkers.map((w) => ({ worker: w, elapsedMs: 50 }));
-    const timeout = new Promise<WorkerProbeResult[]>((resolve) =>
-      setTimeout(() => resolve(fallback), 1500)
-    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<WorkerProbeResult[]>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), 1500);
+    });
 
     const results = await Promise.race([Promise.all(probePromises), timeout]);
+    if (timer) clearTimeout(timer);
     // Sort ascending by execution time (fastest first)
     const sorted = [...results].sort((a, b) => a.elapsedMs - b.elapsedMs);
     const fastest = Math.max(1.0, sorted[0].elapsedMs);
@@ -103,8 +117,13 @@ async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Wor
       pCoreWorkers.push(eCoreWorkers.pop()!);
     }
 
-    // Terminate verified E-core workers
+    // Cleanly destroy and terminate verified E-core workers
     for (const eWorker of eCoreWorkers) {
+      try {
+        eWorker.postMessage({ action: 'DESTROY_POOL' });
+      } catch {
+        // Ignore if already terminated
+      }
       eWorker.terminate();
     }
 
@@ -199,7 +218,23 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
           w.postMessage({ action: 'INIT_POOL', keys });
         })
     );
-    await Promise.all(initPromises);
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (signal?.aborted) {
+        reject(new Error('Aborted'));
+        return;
+      }
+      signal?.addEventListener('abort', () => reject(new Error('Aborted')), { once: true });
+    });
+    let initTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      initTimeoutTimer = setTimeout(() => reject(new Error('Worker pool initialization timed out')), 10000);
+    });
+
+    try {
+      await Promise.race([Promise.all(initPromises), abortPromise, timeoutPromise]);
+    } finally {
+      if (initTimeoutTimer) clearTimeout(initTimeoutTimer);
+    }
 
     if (signal?.aborted) throw new Error('Aborted');
 
@@ -318,6 +353,7 @@ async function executePoolEncryption(params: {
   // Asynchronous background writer to decouple storage/disk I/O from worker ALU computation
   let writerPromise: Promise<void> = Promise.resolve();
   let writerError: Error | null = null;
+  let workerError: Error | null = null;
   const backpressureWaiters: (() => void)[] = [];
 
   const notifyDrain = () => {
@@ -331,6 +367,7 @@ async function executePoolEncryption(params: {
     writerPromise = writerPromise.then(async () => {
       while (completedChunks.has(nextEmitChunk)) {
         if (signal?.aborted) throw new Error('Aborted');
+        if (workerError) throw workerError;
         const chunk = completedChunks.get(nextEmitChunk)!;
         completedChunks.delete(nextEmitChunk);
         await onChunkOutput(chunk);
@@ -377,30 +414,50 @@ async function executePoolEncryption(params: {
 
   // Setup permanent message dispatch router for each worker (eliminates per-chunk addEventListener/removeEventListener churn)
   const pendingEncMap = new Map<number, { resolve: (data: ArrayBuffer) => void; reject: (err: Error) => void }>();
-  workers.forEach((w) => {
-    w.onmessage = (e: MessageEvent) => {
-      if (e.data.type === 'CHUNK_DONE') {
-        const p = pendingEncMap.get(e.data.chunkIndex);
-        if (p) {
-          pendingEncMap.delete(e.data.chunkIndex);
-          p.resolve(e.data.data);
+
+  // Instant abort listener to immediately reject pending chunks and wake backpressure
+  const onAbort = () => {
+    const abortErr = new Error('Aborted');
+    for (const p of pendingEncMap.values()) {
+      p.reject(abortErr);
+    }
+    pendingEncMap.clear();
+    notifyDrain();
+  };
+  if (signal) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  try {
+    workers.forEach((w) => {
+      w.onmessage = (e: MessageEvent) => {
+        if (e.data.type === 'CHUNK_DONE') {
+          const p = pendingEncMap.get(e.data.chunkIndex);
+          if (p) {
+            pendingEncMap.delete(e.data.chunkIndex);
+            p.resolve(e.data.data);
+          }
+        } else if (e.data.type === 'ERROR') {
+          const err = new Error(e.data.error || 'Chunk encryption failed');
+          workerError = err;
+          for (const p of pendingEncMap.values()) {
+            p.reject(err);
+          }
+          pendingEncMap.clear();
+          notifyDrain();
         }
-      } else if (e.data.type === 'ERROR') {
-        const err = new Error(e.data.error || 'Chunk encryption failed');
+      };
+      w.onerror = (e: ErrorEvent) => {
+        const err = new Error(e?.message || 'Worker thread crashed');
+        workerError = err;
         for (const p of pendingEncMap.values()) {
           p.reject(err);
         }
         pendingEncMap.clear();
-      }
-    };
-    w.onerror = (e: ErrorEvent) => {
-      const err = new Error(e?.message || 'Worker thread crashed');
-      for (const p of pendingEncMap.values()) {
-        p.reject(err);
-      }
-      pendingEncMap.clear();
-    };
-  });
+        notifyDrain();
+      };
+    });
 
   // Dispatch chunks across workers
   let nextDispatchChunk = 0;
@@ -410,6 +467,7 @@ async function executePoolEncryption(params: {
     while (nextDispatchChunk < chunkCount) {
       if (signal?.aborted) throw new Error('Aborted');
       if (writerError) throw writerError;
+      if (workerError) throw workerError;
       const idx = nextDispatchChunk++;
 
       // Trigger background read-ahead prefetching for upcoming chunks
@@ -453,7 +511,7 @@ async function executePoolEncryption(params: {
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
       const maxBuffered = Math.max(16, workers.length * 4);
-      while (completedChunks.size >= maxBuffered && !writerError) {
+      while (completedChunks.size >= maxBuffered && !writerError && !workerError) {
         if (signal?.aborted) throw new Error('Aborted');
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, 2);
@@ -464,6 +522,7 @@ async function executePoolEncryption(params: {
         });
       }
       if (writerError) throw writerError;
+      if (workerError) throw workerError;
 
       processedBytes += rawBytes.length;
       const speedMBs = calculateLiveSpeed(rawBytes.length);
@@ -503,6 +562,9 @@ async function executePoolEncryption(params: {
   });
 
   // Finalize container metadata & tail pointer
+  if (nextHmacChunk < chunkCount) {
+    throw new Error('Incomplete encryption stream');
+  }
   const hmacIntegrity = hmacHasher.digest();
   const orderHash = sha256(new TextEncoder().encode(CASCADE_ORDER_TAG_STRING));
 
@@ -540,6 +602,15 @@ async function executePoolEncryption(params: {
     totalTimeMs: Math.round(totalTimeMs),
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),
   };
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    const cancelErr = new Error(signal?.aborted ? 'Aborted' : 'Encryption stream interrupted');
+    for (const p of pendingEncMap.values()) {
+      p.reject(cancelErr);
+    }
+    pendingEncMap.clear();
+    notifyDrain();
+  }
 }
 
 async function executePoolDecryption(params: {
@@ -625,6 +696,7 @@ async function executePoolDecryption(params: {
   // Asynchronous background writer to decouple storage/disk I/O from worker ALU computation
   let writerPromise: Promise<void> = Promise.resolve();
   let writerError: Error | null = null;
+  let workerError: Error | null = null;
   const backpressureWaiters: (() => void)[] = [];
 
   const notifyDrain = () => {
@@ -638,6 +710,7 @@ async function executePoolDecryption(params: {
     writerPromise = writerPromise.then(async () => {
       while (completedChunks.has(nextEmitChunk)) {
         if (signal?.aborted) throw new Error('Aborted');
+        if (workerError) throw workerError;
         const finalBytes = completedChunks.get(nextEmitChunk)!;
         completedChunks.delete(nextEmitChunk);
 
@@ -697,30 +770,50 @@ async function executePoolDecryption(params: {
 
   // Setup permanent message dispatch router for each worker (eliminates per-chunk addEventListener/removeEventListener churn)
   const pendingDecMap = new Map<number, { resolve: (data: ArrayBuffer) => void; reject: (err: Error) => void }>();
-  workers.forEach((w) => {
-    w.onmessage = (e: MessageEvent) => {
-      if (e.data.type === 'CHUNK_DONE') {
-        const p = pendingDecMap.get(e.data.chunkIndex);
-        if (p) {
-          pendingDecMap.delete(e.data.chunkIndex);
-          p.resolve(e.data.data);
+
+  // Instant abort listener to immediately reject pending chunks and wake backpressure
+  const onAbort = () => {
+    const abortErr = new Error('Aborted');
+    for (const p of pendingDecMap.values()) {
+      p.reject(abortErr);
+    }
+    pendingDecMap.clear();
+    notifyDrain();
+  };
+  if (signal) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  try {
+    workers.forEach((w) => {
+      w.onmessage = (e: MessageEvent) => {
+        if (e.data.type === 'CHUNK_DONE') {
+          const p = pendingDecMap.get(e.data.chunkIndex);
+          if (p) {
+            pendingDecMap.delete(e.data.chunkIndex);
+            p.resolve(e.data.data);
+          }
+        } else if (e.data.type === 'ERROR') {
+          const err = new Error(GENERIC_DECRYPT_ERROR);
+          workerError = err;
+          for (const p of pendingDecMap.values()) {
+            p.reject(err);
+          }
+          pendingDecMap.clear();
+          notifyDrain();
         }
-      } else if (e.data.type === 'ERROR') {
+      };
+      w.onerror = () => {
         const err = new Error(GENERIC_DECRYPT_ERROR);
+        workerError = err;
         for (const p of pendingDecMap.values()) {
           p.reject(err);
         }
         pendingDecMap.clear();
-      }
-    };
-    w.onerror = () => {
-      const err = new Error(GENERIC_DECRYPT_ERROR);
-      for (const p of pendingDecMap.values()) {
-        p.reject(err);
-      }
-      pendingDecMap.clear();
-    };
-  });
+        notifyDrain();
+      };
+    });
 
   let nextDispatchChunk = 0;
   let completedChunksCount = 0;
@@ -729,6 +822,7 @@ async function executePoolDecryption(params: {
     while (nextDispatchChunk < chunkCount) {
       if (signal?.aborted) throw new Error('Aborted');
       if (writerError) throw writerError;
+      if (workerError) throw workerError;
       const idx = nextDispatchChunk++;
 
       // Trigger background read-ahead prefetching for upcoming chunks
@@ -772,7 +866,7 @@ async function executePoolDecryption(params: {
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
       const maxBuffered = Math.max(16, workers.length * 4);
-      while (completedChunks.size >= maxBuffered && !writerError) {
+      while (completedChunks.size >= maxBuffered && !writerError && !workerError) {
         if (signal?.aborted) throw new Error('Aborted');
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, 2);
@@ -783,6 +877,7 @@ async function executePoolDecryption(params: {
         });
       }
       if (writerError) throw writerError;
+      if (workerError) throw workerError;
 
       processedBytes += validLen;
       const speedMBs = calculateLiveSpeed(validLen);
@@ -836,7 +931,9 @@ async function executePoolDecryption(params: {
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);
 
   const strippedName = file.name.replace(/\.fortknox$/i, '');
-  const restoredName = strippedName.length > 0 ? strippedName : 'decrypted_file';
+  const restoredName = strippedName !== file.name && strippedName.length > 0
+    ? strippedName
+    : `decrypted_${file.name.length > 0 ? file.name : 'file'}`;
 
   return {
     type: 'SUCCESS',
@@ -847,4 +944,13 @@ async function executePoolDecryption(params: {
     totalTimeMs: Math.round(totalTimeMs),
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),
   };
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    const cancelErr = new Error(signal?.aborted ? 'Aborted' : GENERIC_DECRYPT_ERROR);
+    for (const p of pendingDecMap.values()) {
+      p.reject(cancelErr);
+    }
+    pendingDecMap.clear();
+    notifyDrain();
+  }
 }

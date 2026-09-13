@@ -16,6 +16,8 @@ import {
   Sparkles,
   Download,
   Upload,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 
 interface KeyManagerProps {
@@ -75,6 +77,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   const [showKey, setShowKey] = useState<[boolean, boolean, boolean, boolean]>([false, false, false, false]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [copyAllStatus, setCopyAllStatus] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const keyList: { key: keyof CascadeKeys; label: string; index: number }[] = [
     { key: 'layer1ThreefishHex', label: 'Layer 1: Threefish-1024 Key', index: 0 },
@@ -84,6 +87,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   ];
 
   const handleGenerateKey = (keyName: keyof CascadeKeys) => {
+    setImportError(null);
     const newHex = keyName === 'layer1ThreefishHex' ? generateRandomKey(128) : generateRandomKey(32);
     onChangeKeys({
       ...keys,
@@ -92,6 +96,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   };
 
   const handleGenerateAll = () => {
+    setImportError(null);
     onChangeKeys({
       layer1ThreefishHex: generateRandomKey(128),
       layer2SerpentHex: generateRandomKey(32),
@@ -196,20 +201,28 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 1024 * 1024) {
+      setImportError('Invalid key file: file size exceeds 1 MB limit.');
+      e.target.value = '';
+      return;
+    }
+    setImportError(null);
     const reader = new FileReader();
     reader.onerror = () => {
-      alert('Failed to read key file from disk.');
+      setImportError('Failed to read key file from disk.');
     };
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
         const source = (parsed && typeof parsed === 'object' && parsed.keys) ? parsed.keys : parsed;
-        const sanitize = (val: unknown) =>
-          typeof val === 'string'
-            ? val.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '')
-            : '';
+        const sanitize = (val: unknown): { clean: string; hasNonHex: boolean } => {
+          if (typeof val !== 'string') return { clean: '', hasNonHex: false };
+          const trimmed = val.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '');
+          const isHex = /^[0-9a-fA-F]*$/.test(trimmed);
+          return { clean: isHex ? trimmed : '', hasNonHex: !isHex && trimmed.length > 0 };
+        };
 
-        const k1 = sanitize(
+        const r1 = sanitize(
           source?.layer1ThreefishHex ||
           source?.layer1_threefish_1024bit ||
           source?.layer1 ||
@@ -217,14 +230,14 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
           source?.threefish1024 ||
           source?.key1
         );
-        const k2 = sanitize(
+        const r2 = sanitize(
           source?.layer2SerpentHex ||
           source?.layer2_serpent_256bit ||
           source?.layer2 ||
           source?.serpent ||
           source?.key2
         );
-        const k3 = sanitize(
+        const r3 = sanitize(
           source?.layer3ChaChaHex ||
           source?.layer3_chacha20_256bit ||
           source?.layer3 ||
@@ -232,7 +245,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
           source?.chacha20 ||
           source?.key3
         );
-        const k4 = sanitize(
+        const r4 = sanitize(
           source?.layer4AesHex ||
           source?.layer4_aes_256bit ||
           source?.layer4 ||
@@ -241,7 +254,27 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
           source?.key4
         );
 
+        if (r1.hasNonHex || r2.hasNonHex || r3.hasNonHex || r4.hasNonHex) {
+          setImportError('Import failed: Keys in JSON contain invalid non-hexadecimal characters.');
+          return;
+        }
+
+        const k1 = r1.clean;
+        const k2 = r2.clean;
+        const k3 = r3.clean;
+        const k4 = r4.clean;
+
+        if (k1 && k1.length !== 256) {
+          setImportError('Import failed: Layer 1 requires strictly a 1024-bit key (256 hex characters). Legacy 256-bit keys are not supported.');
+          return;
+        }
+        if ((k2 && k2.length !== 64) || (k3 && k3.length !== 64) || (k4 && k4.length !== 64)) {
+          setImportError('Import failed: Layers 2, 3, and 4 require strictly 256-bit keys (64 hex characters).');
+          return;
+        }
+
         if (k1 || k2 || k3 || k4) {
+          setImportError(null);
           onChangeKeys({
             layer1ThreefishHex: k1 || keys.layer1ThreefishHex,
             layer2SerpentHex: k2 || keys.layer2SerpentHex,
@@ -249,10 +282,10 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
             layer4AesHex: k4 || keys.layer4AesHex,
           });
         } else {
-          alert('No recognizable 4-layer cascade keys found in the imported JSON.');
+          setImportError('No recognizable 4-layer cascade keys found in the imported JSON.');
         }
       } catch {
-        alert('Invalid keys JSON file format.');
+        setImportError('Invalid keys JSON file format. Could not parse JSON.');
       }
     };
     reader.readAsText(file);
@@ -318,14 +351,34 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
           </button>
           <label
             id="import-keys-label"
-            title="Import keys from JSON"
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
+            title={disabled ? 'Keys locked during active processing' : 'Import keys from JSON'}
+            className={`p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition ${
+              disabled ? 'opacity-50 pointer-events-none cursor-not-allowed' : 'cursor-pointer'
+            }`}
           >
             <Upload className="w-3.5 h-3.5" />
-            <input type="file" accept=".json" onChange={handleImportJson} className="hidden" />
+            <input type="file" accept=".json" onChange={handleImportJson} disabled={disabled} className="hidden" />
           </label>
         </div>
       </div>
+
+      {/* Import Error Banner */}
+      {importError && (
+        <div id="key-import-error" className="mt-4 flex items-center justify-between gap-2 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs font-mono">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{importError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setImportError(null)}
+            className="text-rose-400 hover:text-rose-200 p-1 rounded transition cursor-pointer"
+            title="Dismiss error"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Warning Notice */}
       <div id="no-recovery-warning" className="mt-4 flex items-start gap-3 p-3 rounded-xl bg-amber-950/40 border border-amber-800/50 text-amber-200/90 text-xs">
@@ -386,14 +439,21 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
               <div className="relative flex items-center">
                 <input
                   id={`key-input-layer-${idx + 1}`}
+                  name={`fortknox_key_layer_${idx + 1}`}
                   type={isVisible ? 'text' : 'password'}
+                  autoComplete="off"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  data-form-type="other"
                   value={val}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    if (importError) setImportError(null);
                     onChangeKeys({
                       ...keys,
                       [item.key]: e.target.value.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, ''),
-                    })
-                  }
+                    });
+                  }}
                   placeholder={
                     idx === 0
                       ? 'Paste or generate 256-character hex key (1024 bits)...'

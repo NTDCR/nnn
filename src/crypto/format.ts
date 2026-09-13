@@ -39,10 +39,14 @@ export function deriveHmacKey(k1: Uint8Array, k2: Uint8Array): Uint8Array {
   }
   const label = new TextEncoder().encode('FORTKNOX_HMAC_KEY_V1');
   const combined = new Uint8Array(k1.length + k2.length + label.length);
-  combined.set(k1, 0);
-  combined.set(k2, k1.length);
-  combined.set(label, k1.length + k2.length);
-  return sha256(combined);
+  try {
+    combined.set(k1, 0);
+    combined.set(k2, k1.length);
+    combined.set(label, k1.length + k2.length);
+    return sha256(combined);
+  } finally {
+    combined.fill(0);
+  }
 }
 
 /**
@@ -51,9 +55,13 @@ export function deriveHmacKey(k1: Uint8Array, k2: Uint8Array): Uint8Array {
 async function deriveMetadataKey(key4: Uint8Array): Promise<Uint8Array> {
   const label = new TextEncoder().encode('FORTKNOX_METADATA_V1');
   const combined = new Uint8Array(key4.length + label.length);
-  combined.set(key4, 0);
-  combined.set(label, key4.length);
-  return sha256(combined);
+  try {
+    combined.set(key4, 0);
+    combined.set(label, key4.length);
+    return sha256(combined);
+  } finally {
+    combined.fill(0);
+  }
 }
 
 /**
@@ -63,12 +71,16 @@ async function derivePointerNonce(key4: Uint8Array, salt?: Uint8Array): Promise<
   const label = new TextEncoder().encode('FORTKNOX_POINTER_NONCE_V1');
   const saltLen = salt ? salt.length : 0;
   const combined = new Uint8Array(key4.length + label.length + saltLen);
-  combined.set(key4, 0);
-  combined.set(label, key4.length);
-  if (salt) {
-    combined.set(salt, key4.length + label.length);
+  try {
+    combined.set(key4, 0);
+    combined.set(label, key4.length);
+    if (salt) {
+      combined.set(salt, key4.length + label.length);
+    }
+    return sha256(combined).subarray(0, 12);
+  } finally {
+    combined.fill(0);
   }
-  return sha256(combined).subarray(0, 12);
 }
 
 /**
@@ -78,12 +90,16 @@ async function deriveMetadataNonce(key4: Uint8Array, salt?: Uint8Array): Promise
   const label = new TextEncoder().encode('FORTKNOX_METADATA_NONCE_V1');
   const saltLen = salt ? salt.length : 0;
   const combined = new Uint8Array(key4.length + label.length + saltLen);
-  combined.set(key4, 0);
-  combined.set(label, key4.length);
-  if (salt) {
-    combined.set(salt, key4.length + label.length);
+  try {
+    combined.set(key4, 0);
+    combined.set(label, key4.length);
+    if (salt) {
+      combined.set(salt, key4.length + label.length);
+    }
+    return sha256(combined).subarray(0, 12);
+  } finally {
+    combined.fill(0);
   }
-  return sha256(combined).subarray(0, 12);
 }
 
 export const CASCADE_ORDER_TAG_STRING = 'FORTKNOX_CASCADE_ORDER_L1_L2_L3_L4_VERIFIED';
@@ -102,6 +118,31 @@ export function encodeMetadataBlob(meta: Partial<ContainerMetadata> & {
   orderConfirm: Uint8Array;
   hmacIntegrity?: Uint8Array;
 }): Uint8Array {
+  if (meta.originalSize < 0 || !Number.isSafeInteger(meta.originalSize)) {
+    throw new Error('Invalid original file size');
+  }
+  if (meta.chunkCount <= 0 || !Number.isSafeInteger(meta.chunkCount)) {
+    throw new Error('Invalid chunk count');
+  }
+  if (meta.chunkSize !== 1048576) {
+    throw new Error('Invalid chunk size');
+  }
+  if (
+    meta.originalSize > meta.chunkCount * meta.chunkSize ||
+    (meta.chunkCount > 1 && meta.originalSize <= (meta.chunkCount - 1) * meta.chunkSize)
+  ) {
+    throw new Error('Invalid chunk count or original file size relationship in metadata encoding');
+  }
+  if (
+    meta.nonceThreefish.length !== 16 ||
+    meta.nonceSerpent.length !== 16 ||
+    meta.nonceChaCha20.length !== 12 ||
+    meta.nonceAes256.length !== 12 ||
+    meta.orderConfirm.length !== 32 ||
+    (meta.hmacIntegrity && meta.hmacIntegrity.length !== 32)
+  ) {
+    throw new Error('Invalid cryptographic component lengths in metadata encoding');
+  }
   const buf = new Uint8Array(METADATA_SIZE);
   // Fill entire buffer with cryptographic random noise first
   fillRandomBytes(buf);
@@ -113,14 +154,14 @@ export function encodeMetadataBlob(meta: Partial<ContainerMetadata> & {
   view.setUint32(16, meta.chunkCount, true);
   view.setUint32(20, meta.chunkSize, true);
 
-  buf.set(meta.nonceThreefish.subarray(0, 16), 24);
-  buf.set(meta.nonceSerpent.subarray(0, 16), 40);
-  buf.set(meta.nonceChaCha20.subarray(0, 12), 56);
-  buf.set(meta.nonceAes256.subarray(0, 12), 68);
+  buf.set(meta.nonceThreefish, 24);
+  buf.set(meta.nonceSerpent, 40);
+  buf.set(meta.nonceChaCha20, 56);
+  buf.set(meta.nonceAes256, 68);
   if (meta.hmacIntegrity) {
-    buf.set(meta.hmacIntegrity.subarray(0, 32), 80);
+    buf.set(meta.hmacIntegrity, 80);
   }
-  buf.set(meta.orderConfirm.subarray(0, 32), 112);
+  buf.set(meta.orderConfirm, 112);
 
   return buf;
 }
@@ -141,11 +182,26 @@ export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
     throw new Error('Decryption failed. Check all keys.');
   }
 
-  const originalSize = Number(view.getBigUint64(8, true));
+  const rawSizeBig = view.getBigUint64(8, true);
   const chunkCount = view.getUint32(16, true);
   const chunkSize = view.getUint32(20, true);
 
-  if (originalSize < 0 || chunkCount <= 0 || chunkSize !== 1048576) {
+  if (
+    rawSizeBig > BigInt(Number.MAX_SAFE_INTEGER) ||
+    chunkCount <= 0 ||
+    chunkSize !== 1048576
+  ) {
+    throw new Error('Decryption failed. Check all keys.');
+  }
+
+  const originalSize = Number(rawSizeBig);
+
+  if (
+    originalSize < 0 ||
+    !Number.isSafeInteger(originalSize) ||
+    originalSize > chunkCount * chunkSize ||
+    (chunkCount > 1 && originalSize <= (chunkCount - 1) * chunkSize)
+  ) {
     throw new Error('Decryption failed. Check all keys.');
   }
 
@@ -179,16 +235,29 @@ export async function maskMetadataBlob(
   key4: Uint8Array,
   explicitNonceOrSalt?: Uint8Array
 ): Promise<Uint8Array> {
+  if (metaBlob.length !== METADATA_SIZE || key4.length !== 32) {
+    throw new Error('Metadata masking requires strictly 512-byte metadata blob and 32-byte key.');
+  }
   const metaKey = await deriveMetadataKey(key4);
   let nonce12: Uint8Array;
+  let isOwnedNonce = false;
   if (explicitNonceOrSalt && explicitNonceOrSalt.length === 12) {
     nonce12 = explicitNonceOrSalt;
   } else if (explicitNonceOrSalt) {
     nonce12 = await deriveMetadataNonce(key4, explicitNonceOrSalt);
+    isOwnedNonce = true;
   } else {
     nonce12 = await deriveMetadataNonce(key4);
+    isOwnedNonce = true;
   }
-  return chacha20(metaKey, nonce12, metaBlob, undefined, 1);
+  try {
+    return chacha20(metaKey, nonce12, metaBlob, undefined, 1);
+  } finally {
+    metaKey.fill(0);
+    if (isOwnedNonce) {
+      nonce12.fill(0);
+    }
+  }
 }
 
 /**
@@ -201,6 +270,9 @@ export async function encryptTailPointer(
   key4: Uint8Array,
   salt?: Uint8Array
 ): Promise<Uint8Array> {
+  if (offset < 0 || !Number.isSafeInteger(offset) || length !== METADATA_SIZE || key4.length !== 32) {
+    throw new Error('Invalid tail pointer parameters.');
+  }
   const pointerData = new Uint8Array(16);
   const view = new DataView(pointerData.buffer, pointerData.byteOffset, pointerData.byteLength);
   view.setBigUint64(0, BigInt(offset), true);
@@ -210,31 +282,36 @@ export async function encryptTailPointer(
 
   const pointerNonce = await derivePointerNonce(key4, salt);
 
-  if (typeof crypto !== 'undefined' && crypto?.subtle && typeof crypto.subtle.importKey === 'function') {
-    try {
-      const cryptoKey = await crypto.subtle.importKey(
-        'raw',
-        key4,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt']
-      );
+  try {
+    if (typeof crypto !== 'undefined' && crypto?.subtle && typeof crypto.subtle.importKey === 'function') {
+      try {
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw',
+          key4,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt']
+        );
 
-      const cipher = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv: pointerNonce, tagLength: 128 },
-        cryptoKey,
-        pointerData
-      );
+        const cipher = await crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv: pointerNonce, tagLength: 128 },
+          cryptoKey,
+          pointerData
+        );
 
-      return new Uint8Array(cipher); // Exactly 32 bytes (16B cipher + 16B tag)
-    } catch {
-      // Fall through to Noble Ciphers fallback
+        return new Uint8Array(cipher); // Exactly 32 bytes (16B cipher + 16B tag)
+      } catch {
+        // Fall through to Noble Ciphers fallback
+      }
     }
-  }
 
-  // Pure software AES-GCM fallback (Noble Ciphers)
-  const cipher = gcm(key4, pointerNonce);
-  return cipher.encrypt(pointerData);
+    // Pure software AES-GCM fallback (Noble Ciphers)
+    const cipher = gcm(key4, pointerNonce);
+    return cipher.encrypt(pointerData);
+  } finally {
+    pointerNonce.fill(0);
+    pointerData.fill(0);
+  }
 }
 
 /**
@@ -245,54 +322,64 @@ export async function decryptTailPointer(
   key4: Uint8Array,
   salt: Uint8Array
 ): Promise<{ offset: number; length: number }> {
-  if (tail32.length !== 32 || !salt || salt.length !== 16) {
+  if (key4.length !== 32 || tail32.length !== 32 || !salt || salt.length !== 16) {
     throw new Error('Decryption failed. Check all keys.');
   }
 
   const pointerNonce = await derivePointerNonce(key4, salt);
 
-  if (typeof crypto !== 'undefined' && crypto?.subtle && typeof crypto.subtle.importKey === 'function') {
+  try {
+    if (typeof crypto !== 'undefined' && crypto?.subtle && typeof crypto.subtle.importKey === 'function') {
+      try {
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw',
+          key4,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['decrypt']
+        );
+
+        const decrypted = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: pointerNonce, tagLength: 128 },
+          cryptoKey,
+          tail32
+        );
+
+        const view = new DataView(decrypted);
+        const offsetBig = view.getBigUint64(0, true);
+        const length = view.getUint32(8, true);
+
+        if (length === METADATA_SIZE && offsetBig <= BigInt(Number.MAX_SAFE_INTEGER)) {
+          const offset = Number(offsetBig);
+          if (offset >= 0) {
+            return { offset, length };
+          }
+        }
+      } catch {
+        // Fall through to Noble Ciphers fallback
+      }
+    }
+
+    // Pure software AES-GCM fallback (Noble Ciphers)
     try {
-      const cryptoKey = await crypto.subtle.importKey(
-        'raw',
-        key4,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['decrypt']
-      );
-
-      const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: pointerNonce, tagLength: 128 },
-        cryptoKey,
-        tail32
-      );
-
-      const view = new DataView(decrypted);
-      const offset = Number(view.getBigUint64(0, true));
+      const cipher = gcm(key4, pointerNonce);
+      const decrypted = cipher.decrypt(tail32);
+      const view = new DataView(decrypted.buffer, decrypted.byteOffset, decrypted.byteLength);
+      const offsetBig = view.getBigUint64(0, true);
       const length = view.getUint32(8, true);
 
-      if (length === METADATA_SIZE && offset >= 0) {
-        return { offset, length };
+      if (length === METADATA_SIZE && offsetBig <= BigInt(Number.MAX_SAFE_INTEGER)) {
+        const offset = Number(offsetBig);
+        if (offset >= 0) {
+          return { offset, length };
+        }
       }
     } catch {
-      // Fall through to Noble Ciphers fallback
+      // Constant-time generic error
     }
+
+    throw new Error('Decryption failed. Check all keys.');
+  } finally {
+    pointerNonce.fill(0);
   }
-
-  // Pure software AES-GCM fallback (Noble Ciphers)
-  try {
-    const cipher = gcm(key4, pointerNonce);
-    const decrypted = cipher.decrypt(tail32);
-    const view = new DataView(decrypted.buffer, decrypted.byteOffset, decrypted.byteLength);
-    const offset = Number(view.getBigUint64(0, true));
-    const length = view.getUint32(8, true);
-
-    if (length === METADATA_SIZE && offset >= 0) {
-      return { offset, length };
-    }
-  } catch {
-    // Constant-time generic error
-  }
-
-  throw new Error('Decryption failed. Check all keys.');
 }

@@ -147,6 +147,9 @@ export class Serpent256 {
       this.subkeys[i * 4 + 3] = skOut[3];
     }
 
+    w.fill(0);
+    skOut.fill(0);
+
     this.simdEngine = SerpentSimdEngine.create(keyBytes);
   }
 
@@ -333,8 +336,11 @@ export class Serpent256 {
   }
 
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
-    if (baseNonce.length < 8) {
-      throw new Error('Serpent-256 base nonce must be at least 8 bytes');
+    if (baseNonce.length !== 16) {
+      throw new Error('Serpent-256 CTR requires strictly a 16-byte nonce.');
+    }
+    if (chunkIndex < 0 || !Number.isSafeInteger(chunkIndex)) {
+      throw new Error('Invalid chunk index');
     }
 
     if (this.simdEngine) {
@@ -344,8 +350,8 @@ export class Serpent256 {
 
     const BLOCK_SIZE = 16;
     const TWO_BLOCKS = 32;
-    const blocksInChunk = Math.ceil(data.length / BLOCK_SIZE);
-    let counter = BigInt(chunkIndex) * BigInt(blocksInChunk);
+    const BLOCKS_PER_CHUNK = 65536; // 1048576 / BLOCK_SIZE (fixed 1 MB chunk coordinate space)
+    let counter = BigInt(chunkIndex) * BigInt(BLOCKS_PER_CHUNK);
 
     const nonceView = new DataView(baseNonce.buffer, baseNonce.byteOffset, 8);
     const n0 = nonceView.getUint32(0, true);

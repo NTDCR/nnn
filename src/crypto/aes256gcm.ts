@@ -30,20 +30,25 @@ export class Aes256Gcm {
     if (baseNonce.length < 12) {
       throw new Error('AES-256-GCM base nonce must be at least 12 bytes');
     }
-    const nonce = new Uint8Array(baseNonce.subarray(0, 12));
-    const idxView = new DataView(new ArrayBuffer(8));
-    idxView.setBigUint64(0, BigInt(chunkIndex), true);
-    for (let i = 0; i < 8; i++) {
-      nonce[4 + i] ^= idxView.getUint8(i);
+    if (chunkIndex < 0 || !Number.isSafeInteger(chunkIndex)) {
+      throw new Error('Invalid chunk index');
     }
+    const nonce = new Uint8Array(baseNonce.subarray(0, 12));
+    const low = chunkIndex >>> 0;
+    const high = Math.floor(chunkIndex / 0x100000000) >>> 0;
+    nonce[4] ^= low & 0xff;
+    nonce[5] ^= (low >>> 8) & 0xff;
+    nonce[6] ^= (low >>> 16) & 0xff;
+    nonce[7] ^= (low >>> 24) & 0xff;
+    nonce[8] ^= high & 0xff;
+    nonce[9] ^= (high >>> 8) & 0xff;
+    nonce[10] ^= (high >>> 16) & 0xff;
+    nonce[11] ^= (high >>> 24) & 0xff;
     return nonce;
   }
 
-  private decryptBuffer: Uint8Array = new Uint8Array(1048576 + 16);
-
   public destroy(): void {
     this.rawKey.fill(0);
-    this.decryptBuffer.fill(0);
     this.cryptoKeyPromise = null;
   }
 
@@ -56,6 +61,9 @@ export class Aes256Gcm {
     nonce12: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<{ ciphertext: Uint8Array; tag: Uint8Array }> {
+    if (nonce12.length !== 12) {
+      throw new Error('AES-256-GCM requires strictly a 12-byte nonce.');
+    }
     if (this.cryptoKeyPromise) {
       try {
         const key = await this.cryptoKeyPromise;
@@ -102,10 +110,11 @@ export class Aes256Gcm {
     tag16: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<Uint8Array> {
+    if (nonce12.length !== 12 || tag16.length !== 16) {
+      throw new Error('Decryption failed. Check all keys.');
+    }
     const requiredLen = ciphertext.length + 16;
-    const fullCipher = this.decryptBuffer.length >= requiredLen
-      ? this.decryptBuffer.subarray(0, requiredLen)
-      : new Uint8Array(requiredLen);
+    const fullCipher = new Uint8Array(requiredLen);
     fullCipher.set(ciphertext, 0);
     fullCipher.set(tag16, ciphertext.length);
 
@@ -148,6 +157,9 @@ export class Aes256Gcm {
     nonce12: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<Uint8Array> {
+    if (nonce12.length !== 12 || contiguousCipherAndTag.length < 16) {
+      throw new Error('Decryption failed. Check all keys.');
+    }
     if (this.cryptoKeyPromise) {
       try {
         const key = await this.cryptoKeyPromise;

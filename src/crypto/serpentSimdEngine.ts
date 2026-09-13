@@ -70,6 +70,9 @@ export class SerpentSimdEngine {
   }
 
   public static create(keyBytes: Uint8Array): SerpentSimdEngine | null {
+    if (keyBytes.length !== 32) {
+      return null;
+    }
     try {
       const wasmModule = getWasmModule();
       if (!wasmModule) return null;
@@ -91,6 +94,9 @@ export class SerpentSimdEngine {
   }
 
   private init(keyBytes: Uint8Array): void {
+    if (keyBytes.length !== 32) {
+      throw new Error('Serpent-256 requires strictly a 32-byte key.');
+    }
     this.ensureCapacity(DATA_OFFSET + 1024);
     const memU8 = new Uint8Array(this.memory.buffer);
     memU8.set(keyBytes, KEY_OFFSET);
@@ -106,6 +112,12 @@ export class SerpentSimdEngine {
   }
 
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
+    if (baseNonce.length !== 16) {
+      throw new Error('Serpent-256 CTR requires strictly a 16-byte nonce.');
+    }
+    if (chunkIndex < 0 || !Number.isSafeInteger(chunkIndex)) {
+      throw new Error('Invalid chunk index');
+    }
     const dataLen = data.length;
     const requiredBytes = DATA_OFFSET + dataLen;
     this.ensureCapacity(requiredBytes);
@@ -122,7 +134,7 @@ export class SerpentSimdEngine {
   public destroy(): void {
     try {
       const memU8 = new Uint8Array(this.memory.buffer);
-      memU8.fill(0, BASE_OFFSET, DATA_OFFSET + 256);
+      memU8.fill(0);
     } catch {
       // Ignore cleanup error
     }

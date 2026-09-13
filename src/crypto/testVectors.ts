@@ -464,6 +464,8 @@ export async function runSelfVerificationTests(
 
     const t1 = performance.now();
     const passed = wasmPassed && tsPassed && tamperDetected;
+    wasmEngine.destroy?.();
+    tsEngine.destroy();
 
     report({
       suite: 'Native Cascade Architecture',
@@ -537,6 +539,8 @@ export async function runSelfVerificationTests(
 
     const t1 = performance.now();
     const passed = flowAPassed && flowBPassed;
+    wasmEngine.destroy?.();
+    tsEngine.destroy();
 
     report({
       suite: 'Cross-Engine Architecture',
@@ -698,6 +702,8 @@ export async function runSelfVerificationTests(
 
     const allPassed = cipherDiffers && roundtripPassed && containerSim.success;
     const t1 = performance.now();
+    tf1024.destroy();
+    key1024.fill(0);
 
     report({
       suite: 'Native 1024-Bit Key Architecture',
@@ -967,6 +973,11 @@ async function simulateContainerWorkflow(
     recovered.set(c, rPos);
     rPos += c.length;
   }
+
+  pipeline.destroy?.();
+  k1.fill(0);
+  k2.fill(0);
+  k4.fill(0);
 
   return {
     success: hmacPassed && bytesToHex(recovered) === bytesToHex(fileBytes),

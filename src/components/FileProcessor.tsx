@@ -16,9 +16,10 @@ import {
 
 interface FileProcessorProps {
   keys: CascadeKeys;
+  onProcessingChange?: (isProcessing: boolean) => void;
 }
 
-export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
+export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessingChange }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -90,6 +91,10 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     };
   }, []);
 
+  useEffect(() => {
+    onProcessingChange?.(isProcessing);
+  }, [isProcessing, onProcessingChange]);
+
   const clearDownloadUrl = () => {
     setDownloadBlobUrl((prev) => {
       if (prev) safeRevokeBlobUrl(prev, 60000);
@@ -99,6 +104,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+    if (isProcessing) return;
     setIsDragging(true);
   };
 
@@ -109,6 +115,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    if (isProcessing) return;
+    const item = e.dataTransfer.items?.[0];
+    const entry = (item as unknown as { webkitGetAsEntry?: () => { isDirectory?: boolean } | null })?.webkitGetAsEntry?.();
+    if (entry && entry.isDirectory) {
+      setError('Folders are not supported. Please select or drop a single file.');
+      return;
+    }
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       setSelectedFile(e.dataTransfer.files[0]);
       setResult(null);
@@ -118,6 +131,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isProcessing) return;
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
       setResult(null);
@@ -127,7 +141,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     e.target.value = '';
   };
 
-  const sanitizeHexKey = (k: string) => k.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '');
+  const sanitizeHexKey = (k?: string) => (k ?? '').trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '');
 
   const validateKeys = (): boolean => {
     const hexPattern256 = /^[0-9a-fA-F]{64}$/;
@@ -169,15 +183,16 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     writableStreamRef.current = null;
 
     // Direct disk streaming setup
+    const safeRawName = selectedFile.name.replace(/^.*[\\/]/, '').replace(/[/\\?%*:|"<>]/g, '_');
     let targetFileName: string;
     if (action === 'ENCRYPT') {
-      targetFileName = `${selectedFile.name}.fortknox`;
+      targetFileName = `${safeRawName}.fortknox`;
     } else {
-      const stripped = selectedFile.name.replace(/\.fortknox$/i, '');
-      if (stripped.length > 0 && stripped !== selectedFile.name) {
+      const stripped = safeRawName.replace(/\.fortknox$/i, '');
+      if (stripped.length > 0 && stripped !== safeRawName) {
         targetFileName = stripped;
       } else {
-        targetFileName = `decrypted_${selectedFile.name.length > 0 ? selectedFile.name : 'file'}`;
+        targetFileName = `decrypted_${safeRawName.length > 0 ? safeRawName : 'file'}`;
       }
     }
 
@@ -401,7 +416,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
               className="bg-transparent text-indigo-300 font-mono text-[11px] outline-none cursor-pointer"
             >
               <option value="auto" className="bg-slate-900 text-slate-200">Auto (Strict P-Cores Only)</option>
-              <option value="webgpu" className="bg-slate-900 text-slate-200">WebGPU (Hardware Compute)</option>
+              <option value="webgpu" className="bg-slate-900 text-slate-200">WebGPU (Multi-Core CPU Fallback)</option>
               <option value="2" className="bg-slate-900 text-slate-200">2 P-Cores (Dual P-Core / Mobile Big.LITTLE)</option>
               <option value="4" className="bg-slate-900 text-slate-200">4 P-Cores (Quad P-Core)</option>
               <option value="6" className="bg-slate-900 text-slate-200">6 P-Cores (Hexa P-Core)</option>
@@ -430,10 +445,10 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
           ) : (
             <div
               className="flex items-center gap-1.5 text-xs text-emerald-300/90 font-mono bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-800/50"
-              title="This browser does not support the File System Access API. Chunks are automatically buffered and auto-downloaded on completion."
+              title="This browser does not support the File System Access API. Processed chunks are buffered in browser memory and auto-downloaded on completion."
             >
               <Download className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span>Auto-Download Fallback</span>
+              <span>In-Memory Auto-Download</span>
             </div>
           )}
         </div>
@@ -455,7 +470,9 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
           id="file-input-element"
           type="file"
           onChange={handleFileChange}
-          onDrop={(e) => e.stopPropagation()}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
           disabled={isProcessing}
           className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
         />
@@ -480,7 +497,9 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
               Drag & drop any file here, or <span className="text-indigo-400 font-semibold underline">browse</span>
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              Supports arbitrary file sizes (even 100+ GB) with constant 2–3 MB RAM streaming
+              {hasFileSystemAccess
+                ? 'Supports arbitrary file sizes (even 100+ GB) with constant 2–3 MB RAM streaming'
+                : 'Supports arbitrary file sizes with automatic in-memory download packaging'}
             </p>
           </div>
         )}

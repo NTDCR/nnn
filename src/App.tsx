@@ -28,6 +28,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<'processor' | 'verification'>('processor');
   const [isSpecModalOpen, setIsSpecModalOpen] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
@@ -142,10 +143,10 @@ export default function App() {
         {/* Tab Content - rendered with CSS visibility to prevent unmounting active file streams */}
         <div className={activeTab === 'processor' ? 'space-y-6' : 'hidden'}>
           {/* Key Manager Component */}
-          <KeyManager keys={keys} onChangeKeys={setKeys} />
+          <KeyManager keys={keys} onChangeKeys={setKeys} disabled={isProcessing} />
 
           {/* File Processor Component */}
-          <FileProcessor keys={keys} />
+          <FileProcessor keys={keys} onProcessingChange={setIsProcessing} />
         </div>
 
         <div className={activeTab === 'verification' ? 'space-y-6' : 'hidden'}>

@@ -137,6 +137,10 @@ export async function createCascadeEngine(
   // Pure Native Pipeline with full 1024-bit Threefish ARX cipher & 1792-bit combined entropy
   // Powered by 32-lane bit-slice SIMD vectorization and 64-bit vector keystream streaming
   const pipeline = new CascadePipeline(k1, k2, k3, k4);
+  if (typeof k1Input === 'string') k1.fill(0);
+  if (typeof k2Input === 'string') k2.fill(0);
+  if (typeof k3Input === 'string') k3.fill(0);
+  if (typeof k4Input === 'string') k4.fill(0);
 
   return {
     isWasmAccelerated: false,
@@ -167,19 +171,36 @@ export async function executeWasmLayer(
   key: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
-  // Layer 1 strictly requires 128 bytes (1024-bit key)
+  // Layer 1 strictly requires 128 bytes (1024-bit key) and 16-byte nonce
   if (layerIdx === 1) {
     if (key.length !== 128) {
       throw new Error('Threefish-1024 requires strictly a 128-byte (1024-bit) key.');
+    }
+    if (nonce.length !== 16) {
+      throw new Error('Threefish-1024 CTR requires strictly a 16-byte nonce.');
     }
     const tweak = new Uint8Array([
       0x54, 0x68, 0x72, 0x65, 0x65, 0x66, 0x69, 0x73,
       0x68, 0x54, 0x77, 0x65, 0x61, 0x6b, 0x31, 0x36
     ]);
     const tf = new Threefish1024(key, tweak);
-    const work = new Uint8Array(data);
-    tf.processCtr(work, nonce, 0);
-    return work;
+    try {
+      const work = new Uint8Array(data);
+      tf.processCtr(work, nonce, 0);
+      return work;
+    } finally {
+      tf.destroy();
+      tweak.fill(0);
+    }
+  }
+
+  if (layerIdx === 2) {
+    if (key.length !== 32) {
+      throw new Error('Serpent-256 requires strictly a 32-byte key.');
+    }
+    if (nonce.length !== 16) {
+      throw new Error('Serpent-256 CTR requires strictly a 16-byte nonce.');
+    }
   }
 
   const loaded = await ensureWasmLoaded();
@@ -198,9 +219,13 @@ export async function executeWasmLayer(
   // Graceful pure TypeScript fallback for layer execution
   if (layerIdx === 2) {
     const serpent = new Serpent256(key);
-    const work = new Uint8Array(data);
-    serpent.processCtr(work, nonce, 0);
-    return work;
+    try {
+      const work = new Uint8Array(data);
+      serpent.processCtr(work, nonce, 0);
+      return work;
+    } finally {
+      serpent.destroy();
+    }
   } else {
     throw new Error(`Layer ${layerIdx} fallback not implemented`);
   }

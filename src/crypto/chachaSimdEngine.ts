@@ -91,6 +91,7 @@ export class ChaChaSimdEngine {
   private memory: WebAssembly.Memory;
   private exports: ChaChaPolyExports;
   private rawKey: Uint8Array;
+  private isDestroyed = false;
 
   private constructor(wasmInstance: WebAssembly.Instance, rawKey: Uint8Array) {
     this.exports = wasmInstance.exports as unknown as ChaChaPolyExports;
@@ -105,6 +106,9 @@ export class ChaChaSimdEngine {
   }
 
   public static create(keyBytes: Uint8Array): ChaChaSimdEngine | null {
+    if (keyBytes.length !== 32) {
+      return null;
+    }
     try {
       const wasmModule = getWasmModule();
       if (!wasmModule) return null;
@@ -136,7 +140,16 @@ export class ChaChaSimdEngine {
    * Mutates `data` directly and returns 16-byte Poly1305 authentication tag
    */
   public encryptInPlace(data: Uint8Array, nonce12: Uint8Array, aad: Uint8Array = new Uint8Array(0)): Uint8Array {
+    if (this.isDestroyed) {
+      throw new Error('ChaChaSimdEngine has been destroyed');
+    }
+    if (nonce12.length !== 12) {
+      throw new Error('ChaCha20-Poly1305 nonce must be strictly 12 bytes');
+    }
     const aadLen = aad.length;
+    if (aadLen < 0 || !Number.isSafeInteger(aadLen) || aadLen > 65536) {
+      throw new Error('Invalid AAD length');
+    }
     const dataLen = data.length;
     const dataOffset = AAD_OFFSET + ((aadLen + 15) & ~15) + 64;
     const totalRequired = dataOffset + dataLen + 64;
@@ -172,11 +185,17 @@ export class ChaChaSimdEngine {
    * Mutates `data` directly to plaintext if and only if tag is 100% valid
    */
   public decryptInPlace(data: Uint8Array, nonce12: Uint8Array, tag16: Uint8Array, aad: Uint8Array = new Uint8Array(0)): void {
-    if (tag16.length !== 16) {
+    if (this.isDestroyed) {
+      throw new Error('ChaChaSimdEngine has been destroyed');
+    }
+    if (tag16.length !== 16 || nonce12.length !== 12) {
       throw new Error('Decryption failed. Check all keys.');
     }
 
     const aadLen = aad.length;
+    if (aadLen < 0 || !Number.isSafeInteger(aadLen) || aadLen > 65536) {
+      throw new Error('Invalid AAD length');
+    }
     const dataLen = data.length;
     const dataOffset = AAD_OFFSET + ((aadLen + 15) & ~15) + 64;
     const totalRequired = dataOffset + dataLen + 64;
@@ -205,6 +224,7 @@ export class ChaChaSimdEngine {
     );
 
     if (res !== 0) {
+      memU8.fill(0, dataOffset, dataOffset + dataLen);
       throw new Error('Decryption failed. Check all keys.');
     }
 
@@ -246,9 +266,10 @@ export class ChaChaSimdEngine {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     try {
       const memU8 = new Uint8Array(this.memory.buffer);
-      memU8.fill(0, 0, Math.min(memU8.length, 2 * 1024 * 1024));
+      memU8.fill(0);
       this.rawKey.fill(0);
     } catch {
       // Ignore cleanup error

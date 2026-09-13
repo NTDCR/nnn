@@ -169,6 +169,9 @@ export class UnifiedCascadeEngine {
     k2: Uint8Array,
     k3: Uint8Array
   ): UnifiedCascadeEngine | null {
+    if (k1.length !== 128 || tweak.length !== 16 || k2.length !== 32 || k3.length !== 32) {
+      return null;
+    }
     try {
       const wasmModule = getWasmModule();
       if (!wasmModule) return null;
@@ -211,8 +214,14 @@ export class UnifiedCascadeEngine {
     chunkIndex: number,
     aad: Uint8Array = new Uint8Array(0)
   ): Uint8Array {
+    if (n1.length !== 16 || n2.length !== 16 || n3.length !== 12) {
+      throw new Error('Invalid nonce length: Threefish(16B), Serpent(16B), ChaCha20(12B) required');
+    }
     const dataLen = data.length;
     const aadLen = aad.length;
+    if (aadLen > 16) {
+      throw new Error('AAD length exceeds maximum buffer allocation (16 bytes)');
+    }
     const required = DATA_OFFSET + dataLen + 64;
     const mem = this.ensureCapacity(required);
 
@@ -255,12 +264,15 @@ export class UnifiedCascadeEngine {
     tagChaCha: Uint8Array,
     aad: Uint8Array = new Uint8Array(0)
   ): void {
-    if (tagChaCha.length !== 16) {
+    if (tagChaCha.length !== 16 || n1.length !== 16 || n2.length !== 16 || n3.length !== 12) {
       throw new Error('Decryption failed. Check all keys.');
     }
 
     const dataLen = data.length;
     const aadLen = aad.length;
+    if (aadLen > 16) {
+      throw new Error('AAD length exceeds maximum buffer allocation (16 bytes)');
+    }
     const required = DATA_OFFSET + dataLen + 64;
     const mem = this.ensureCapacity(required);
 
@@ -289,6 +301,7 @@ export class UnifiedCascadeEngine {
     );
 
     if (res !== 0) {
+      mem.fill(0, DATA_OFFSET, DATA_OFFSET + dataLen);
       throw new Error('Decryption failed. Check all keys.');
     }
 
@@ -298,7 +311,7 @@ export class UnifiedCascadeEngine {
   public destroy(): void {
     try {
       const memU8 = new Uint8Array(this.memory.buffer);
-      memU8.fill(0, 0, Math.min(memU8.length, 2 * 1024 * 1024));
+      memU8.fill(0);
       this.rawK1.fill(0);
       this.rawK2.fill(0);
       this.rawK3.fill(0);
