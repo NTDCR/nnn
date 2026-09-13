@@ -5,15 +5,18 @@
  */
 
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
+import { ChaChaSimdEngine } from './chachaSimdEngine.ts';
 
 export class ChaCha20Poly1305 {
   private rawKey: Uint8Array;
+  private simdEngine: ChaChaSimdEngine | null = null;
 
   constructor(keyBytes: Uint8Array) {
     if (keyBytes.length !== 32) {
       throw new Error('ChaCha20-Poly1305 key must be 32 bytes');
     }
     this.rawKey = new Uint8Array(keyBytes);
+    this.simdEngine = ChaChaSimdEngine.create(keyBytes);
   }
 
   public deriveChunkNonce(baseNonce: Uint8Array, chunkIndex: number): Uint8Array {
@@ -32,16 +35,22 @@ export class ChaCha20Poly1305 {
   private decryptBuffer: Uint8Array = new Uint8Array(1048576 + 16);
 
   public destroy(): void {
+    if (this.simdEngine) {
+      this.simdEngine.destroy();
+      this.simdEngine = null;
+    }
     this.rawKey.fill(0);
     this.decryptBuffer.fill(0);
   }
 
   /**
-   * Encrypt in-place using audited @noble/ciphers chacha20poly1305
+   * Encrypt in-place using SIMD128-accelerated or audited @noble/ciphers chacha20poly1305
    * Returns 16-byte Poly1305 authentication tag
    */
   public encryptInPlace(data: Uint8Array, nonce12: Uint8Array, aad: Uint8Array = new Uint8Array()): Uint8Array {
-    const cipher = chacha20poly1305(this.rawKey, nonce12, aad);
+    const cipher = this.simdEngine
+      ? this.simdEngine.getCipher(nonce12, aad)
+      : chacha20poly1305(this.rawKey, nonce12, aad);
     const fullCiphertext = cipher.encrypt(data);
     const splitPoint = fullCiphertext.length - 16;
     data.set(fullCiphertext.subarray(0, splitPoint));
@@ -49,11 +58,13 @@ export class ChaCha20Poly1305 {
   }
 
   /**
-   * Decrypt in-place using audited @noble/ciphers chacha20poly1305
+   * Decrypt in-place using SIMD128-accelerated or audited @noble/ciphers chacha20poly1305
    * Throws constant-time error if tag verification fails
    */
   public decryptInPlace(data: Uint8Array, nonce12: Uint8Array, tag16: Uint8Array, aad: Uint8Array = new Uint8Array()): void {
-    const cipher = chacha20poly1305(this.rawKey, nonce12, aad);
+    const cipher = this.simdEngine
+      ? this.simdEngine.getCipher(nonce12, aad)
+      : chacha20poly1305(this.rawKey, nonce12, aad);
     const requiredLen = data.length + 16;
     const fullCiphertext = this.decryptBuffer.length >= requiredLen
       ? this.decryptBuffer.subarray(0, requiredLen)
