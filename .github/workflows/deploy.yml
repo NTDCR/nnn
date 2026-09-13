@@ -36,9 +36,25 @@ jobs:
         run: npm run build
 
       - name: Deploy to gh-pages branch
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
-          keep_files: false
-          force_orphan: true
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p /tmp/build-dist
+          cp -r dist/* /tmp/build-dist/
+          if git ls-remote --exit-code --heads origin gh-pages; then
+            git fetch origin gh-pages
+            git checkout -B gh-pages origin/gh-pages
+          else
+            git checkout --orphan gh-pages
+          fi
+          rm -rf ./*
+          cp -r /tmp/build-dist/* ./
+          touch .nojekyll
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes detected in build artifacts; gh-pages is already up to date."
+          else
+            git commit -m "deploy: ${{ github.sha }}"
+            git push origin gh-pages
+          fi
