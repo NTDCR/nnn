@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { KeyManager } from './components/KeyManager.tsx';
 import { FileProcessor } from './components/FileProcessor.tsx';
 import { VerificationPanel } from './components/VerificationPanel.tsx';

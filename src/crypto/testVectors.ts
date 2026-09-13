@@ -52,7 +52,6 @@ export async function runSelfVerificationTests(
       }
     }
   };
-  const yieldThread = () => new Promise((resolve) => setTimeout(resolve, 8));
 
   // 1. RFC 8439 ChaCha20-Poly1305 AEAD Test Vector (Section 2.8.2)
   try {

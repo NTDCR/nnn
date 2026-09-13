@@ -4,43 +4,7 @@
  * Constant-time tag verification
  */
 
-import { chacha20, chacha20poly1305 } from '@noble/ciphers/chacha.js';
-
-export class ChaCha20 {
-  private key: Uint8Array;
-
-  constructor(keyBytes: Uint8Array) {
-    if (keyBytes.length !== 32) {
-      throw new Error('ChaCha20 key must be 32 bytes');
-    }
-    this.key = new Uint8Array(keyBytes);
-  }
-
-  public applyKeystream(data: Uint8Array, nonce12: Uint8Array, counter: number = 0): void {
-    // In @noble/ciphers, chacha20(key, nonce, data, output, counter)
-    const stream = chacha20(this.key, nonce12, data, undefined, counter);
-    data.set(stream);
-  }
-
-  public generateBlock(counter: number, nonce12: Uint8Array, outBlock: Uint8Array): void {
-    const zeroes = new Uint8Array(outBlock.length);
-    const stream = chacha20(this.key, nonce12, zeroes, undefined, counter);
-    outBlock.set(stream);
-  }
-}
-
-export class Poly1305 {
-  /**
-   * Computes Poly1305 authentication tag using audited @noble/ciphers implementation
-   */
-  public static computeTag(key32: Uint8Array, message: Uint8Array, aad: Uint8Array = new Uint8Array()): Uint8Array {
-    // A synthetic ChaCha20Poly1305 invocation or using @noble Poly1305
-    const dummyNonce = new Uint8Array(12);
-    const cipher = chacha20poly1305(key32, dummyNonce, aad);
-    const full = cipher.encrypt(message);
-    return full.subarray(full.length - 16);
-  }
-}
+import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 
 export class ChaCha20Poly1305 {
   private rawKey: Uint8Array;

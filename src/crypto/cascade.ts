@@ -77,9 +77,6 @@ export function calculateEntropyScore(hex: string, expectedBits: number = 256): 
   if (!/^[0-9a-fA-F]*$/.test(clean)) {
     return { bits: 0, label: 'Invalid hex character', color: 'text-rose-400' };
   }
-
-  const targetHexLen = expectedBits / 4; // 64 for 256 bits, 256 for 1024 bits
-
   // If 1024-bit expected, strictly require full 1024-bit (256 hex)
   if (expectedBits === 1024) {
     if (clean.length < 256) {

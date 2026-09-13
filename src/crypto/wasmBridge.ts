@@ -9,11 +9,10 @@
  */
 
 import initWasm, {
-  CascadeEngine as WasmCascadeEngine,
   encrypt_layer as wasmEncryptLayer,
   decrypt_layer as wasmDecryptLayer
 } from '../wasm_pkg/fortknox_cascade_crypto.js';
-import { CascadePipeline, hexToBytes, GENERIC_DECRYPT_ERROR } from './cascade.ts';
+import { CascadePipeline, hexToBytes } from './cascade.ts';
 import { Threefish1024 } from './threefish1024.ts';
 import { Serpent256 } from './serpent256.ts';
 
