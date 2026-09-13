@@ -139,8 +139,15 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     const a = document.createElement('a');
     a.href = url;
     a.download = `fortknox_keys_${Date.now()}.json`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      if (document.body.contains(a)) {
+        document.body.removeChild(a);
+      }
+      URL.revokeObjectURL(url);
+    }, 1500);
   };
 
   const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {

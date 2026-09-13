@@ -201,6 +201,13 @@ self.onmessage = async (e: MessageEvent) => {
   }
 
   if (action === 'DESTROY_POOL') {
+    if (pooledEngine && typeof pooledEngine.destroy === 'function') {
+      try {
+        pooledEngine.destroy();
+      } catch {
+        // Ignore cleanup error
+      }
+    }
     pooledEngine = null;
     self.postMessage({ type: 'POOL_DESTROYED' });
     return;

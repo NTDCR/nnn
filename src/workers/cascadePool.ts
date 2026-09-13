@@ -237,8 +237,15 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
       });
     }
   } finally {
-    // Ephemeral key hygiene and worker termination
-    workers.forEach((w) => w.terminate());
+    // Ephemeral key hygiene and worker memory zeroization
+    workers.forEach((w) => {
+      try {
+        w.postMessage({ action: 'DESTROY_POOL' });
+      } catch {
+        // Ignore if already terminated
+      }
+      w.terminate();
+    });
     if (k1) k1.fill(0);
     if (k2) k2.fill(0);
     if (k3) k3.fill(0);

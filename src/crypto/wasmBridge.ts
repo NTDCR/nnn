@@ -47,6 +47,7 @@ export interface WasmCascadeInstance {
     n4: Uint8Array,
     tagChaCha: Uint8Array
   ): Promise<Uint8Array>;
+  destroy?(): void;
 }
 
 let wasmInitPromise: Promise<boolean> | null = null;
@@ -149,6 +150,9 @@ export async function createCascadeEngine(
     },
     async decryptChunkContiguous(contiguousCipherAndTag, index, n1, n2, n3, n4, tChaCha) {
       return pipeline.decryptChunkContiguous(contiguousCipherAndTag, index, n1, n2, n3, n4, tChaCha);
+    },
+    destroy() {
+      pipeline.destroy();
     },
   };
 }

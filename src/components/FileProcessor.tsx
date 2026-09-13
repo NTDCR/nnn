@@ -111,7 +111,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     e.target.value = '';
   };
 
-  const sanitizeHexKey = (k: string) => k.trim().replace(/^0x/i, '').replace(/[\s\-_:]/g, '');
+  const sanitizeHexKey = (k: string) => k.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, '');
 
   const validateKeys = (): boolean => {
     const hexPattern256 = /^[0-9a-fA-F]{64}$/;
@@ -140,6 +140,21 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     }
     if (!validateKeys()) return;
 
+    // Safety guard for browsers without direct-to-disk File System Access API
+    if (!hasFileSystemAccess || !useDirectDiskWrite) {
+      const isMobileBrowser = typeof navigator !== 'undefined' && (
+        /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent) ||
+        Boolean((navigator as unknown as { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile)
+      );
+      const maxSafeBytes = isMobileBrowser ? 1.2 * 1024 * 1024 * 1024 : 2.2 * 1024 * 1024 * 1024;
+      if (selectedFile.size > maxSafeBytes) {
+        setError(
+          `Memory limit notice: In-memory fallback cannot safely buffer files larger than ${(maxSafeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB without risk of browser tab crash. Please enable "Direct-to-Disk Stream" on a desktop Chromium browser (Chrome/Edge) for large files.`
+        );
+        return;
+      }
+    }
+
     const k1 = sanitizeHexKey(keys.layer1ThreefishHex);
     const k2 = sanitizeHexKey(keys.layer2SerpentHex);
     const k3 = sanitizeHexKey(keys.layer3ChaChaHex);
@@ -158,7 +173,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       targetFileName = `${selectedFile.name}.fortknox`;
     } else {
       const stripped = selectedFile.name.replace(/\.fortknox$/i, '');
-      targetFileName = stripped.length > 0 ? stripped : `decrypted_${selectedFile.name}`;
+      targetFileName = stripped.length > 0 ? stripped : 'decrypted_file';
     }
 
     if (hasFileSystemAccess && useDirectDiskWrite) {
@@ -351,8 +366,12 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
                 const val = e.target.value;
                 const nextMode = val === 'auto' ? 'auto' : val === 'webgpu' ? 'webgpu' : (Number(val) as 2 | 4 | 6 | 8);
                 setCoreMode(nextMode);
-                if (typeof window !== 'undefined' && window.localStorage) {
-                  localStorage.setItem('fortknox_core_mode', String(nextMode));
+                try {
+                  if (typeof window !== 'undefined' && window.localStorage) {
+                    localStorage.setItem('fortknox_core_mode', String(nextMode));
+                  }
+                } catch {
+                  // Ignore quota or security restrictions in private browsing
                 }
               }}
               disabled={isProcessing}
@@ -413,6 +432,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
           id="file-input-element"
           type="file"
           onChange={handleFileChange}
+          onDrop={(e) => e.stopPropagation()}
           disabled={isProcessing}
           className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
         />
