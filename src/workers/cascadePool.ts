@@ -50,9 +50,14 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
     k3 = hexToBytes(keys.layer3ChaChaHex, 32);
     k4 = hexToBytes(keys.layer4AesHex, 32);
 
-    // Determine optimal worker pool size: 1 worker for single-chunk files, 2 workers for multi-chunk
+    // Adaptive mobile-aware pool sizing:
+    // Mobile CPUs have heterogenous big.LITTLE architectures (typically 2 Big/Performance cores + 4-6 Little cores).
+    // Using >2 workers on mobile spills onto slow Little cores causing severe Head-of-Line blocking and thermal throttling.
+    // Desktop systems have 4-16 uniform high-performance cores, scaling cleanly to 4 workers.
     const isMultiChunk = file.size > CHUNK_SIZE;
-    const poolSize = isMultiChunk ? 2 : 1;
+    const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    const maxWorkers = isMobile ? 2 : Math.min(4, Math.max(2, (navigator?.hardwareConcurrency || 4) >> 1));
+    const poolSize = isMultiChunk ? maxWorkers : 1;
 
     // Instantiate and initialize worker pool
     for (let i = 0; i < poolSize; i++) {
@@ -156,6 +161,30 @@ async function executePoolEncryption(params: {
   let nextEmitChunk = 0;
   const completedChunks = new Map<number, Uint8Array>();
 
+  // Strict sequential HMAC digest calculation
+  let nextHmacChunk = 0;
+  const rawChunkMap = new Map<number, Uint8Array>();
+  const updateSequentialHmac = (chunkIdx: number, bytes: Uint8Array) => {
+    rawChunkMap.set(chunkIdx, bytes);
+    while (rawChunkMap.has(nextHmacChunk)) {
+      const b = rawChunkMap.get(nextHmacChunk)!;
+      rawChunkMap.delete(nextHmacChunk);
+      hmacHasher.update(b);
+      nextHmacChunk++;
+    }
+  };
+
+  // Background pipelined chunk prefetcher (eliminates storage read latency)
+  const slicePrefetchMap = new Map<number, Promise<ArrayBuffer>>();
+  const getChunkSlice = (chunkIdx: number): Promise<ArrayBuffer> => {
+    if (!slicePrefetchMap.has(chunkIdx)) {
+      const start = chunkIdx * CHUNK_SIZE;
+      const end = Math.min(originalSize, start + CHUNK_SIZE);
+      slicePrefetchMap.set(chunkIdx, file.slice(start, end).arrayBuffer());
+    }
+    return slicePrefetchMap.get(chunkIdx)!;
+  };
+
   const emitReadyChunks = async () => {
     while (completedChunks.has(nextEmitChunk)) {
       const chunk = completedChunks.get(nextEmitChunk)!;
@@ -173,13 +202,16 @@ async function executePoolEncryption(params: {
       if (signal?.aborted) throw new Error('Aborted');
       const idx = nextDispatchChunk++;
 
-      const start = idx * CHUNK_SIZE;
-      const end = Math.min(originalSize, start + CHUNK_SIZE);
-      const rawBuffer = await file.slice(start, end).arrayBuffer();
+      // Trigger background read-ahead prefetching for upcoming chunks
+      if (idx + 1 < chunkCount) getChunkSlice(idx + 1);
+      if (idx + 2 < chunkCount) getChunkSlice(idx + 2);
+
+      const rawBuffer = await getChunkSlice(idx);
+      slicePrefetchMap.delete(idx);
       const rawBytes = new Uint8Array(rawBuffer);
 
-      // Sequential HMAC update
-      hmacHasher.update(rawBytes);
+      // Feed to strictly sequenced HMAC
+      updateSequentialHmac(idx, rawBytes);
 
       const chunkWithTags = new Uint8Array(ENCRYPTED_CHUNK_SIZE);
       chunkWithTags.set(rawBytes, 0);
@@ -363,6 +395,17 @@ async function executePoolDecryption(params: {
     }
   };
 
+  // Background pipelined chunk prefetcher for encrypted chunks
+  const slicePrefetchMap = new Map<number, Promise<ArrayBuffer>>();
+  const getEncChunkSlice = (chunkIdx: number): Promise<ArrayBuffer> => {
+    if (!slicePrefetchMap.has(chunkIdx)) {
+      const start = chunkIdx * ENCRYPTED_CHUNK_SIZE;
+      const end = start + ENCRYPTED_CHUNK_SIZE;
+      slicePrefetchMap.set(chunkIdx, file.slice(start, end).arrayBuffer());
+    }
+    return slicePrefetchMap.get(chunkIdx)!;
+  };
+
   let nextDispatchChunk = 0;
 
   const dispatchToWorker = async (worker: Worker) => {
@@ -370,9 +413,12 @@ async function executePoolDecryption(params: {
       if (signal?.aborted) throw new Error('Aborted');
       const idx = nextDispatchChunk++;
 
-      const start = idx * ENCRYPTED_CHUNK_SIZE;
-      const end = start + ENCRYPTED_CHUNK_SIZE;
-      const encBuffer = await file.slice(start, end).arrayBuffer();
+      // Trigger background read-ahead prefetching for upcoming chunks
+      if (idx + 1 < chunkCount) getEncChunkSlice(idx + 1);
+      if (idx + 2 < chunkCount) getEncChunkSlice(idx + 2);
+
+      const encBuffer = await getEncChunkSlice(idx);
+      slicePrefetchMap.delete(idx);
       if (encBuffer.byteLength < ENCRYPTED_CHUNK_SIZE) {
         throw new Error(GENERIC_DECRYPT_ERROR);
       }
