@@ -104,13 +104,15 @@ export class WebGpuCascadeEngine implements WebGpuEngineInstance {
     // Uniform buffer (key: 32B, nonce: 16B, counter: 4B, blocks: 4B, len: 4B, pad: 4B = 64 bytes)
     const uniformArray = new ArrayBuffer(64);
     const uniformU32 = new Uint32Array(uniformArray);
-    const keyU32 = new Uint32Array(key.buffer, key.byteOffset, 8);
-    const nonceU32 = new Uint32Array(nonce.buffer, nonce.byteOffset, 3);
+    const keyView = new DataView(key.buffer, key.byteOffset, Math.min(32, key.byteLength));
+    const nonceView = new DataView(nonce.buffer, nonce.byteOffset, Math.min(12, nonce.byteLength));
 
-    for (let i = 0; i < 8; i++) uniformU32[i] = keyU32[i];
-    uniformU32[8] = nonceU32[0];
-    uniformU32[9] = nonceU32[1];
-    uniformU32[10] = nonceU32[2];
+    for (let i = 0; i < 8; i++) {
+      uniformU32[i] = i * 4 + 4 <= key.byteLength ? keyView.getUint32(i * 4, true) : 0;
+    }
+    uniformU32[8] = nonce.byteLength >= 4 ? nonceView.getUint32(0, true) : 0;
+    uniformU32[9] = nonce.byteLength >= 8 ? nonceView.getUint32(4, true) : 0;
+    uniformU32[10] = nonce.byteLength >= 12 ? nonceView.getUint32(8, true) : 0;
     uniformU32[11] = 0; // pad
     uniformU32[12] = startCounter >>> 0;
     uniformU32[13] = chunkBlocks >>> 0;

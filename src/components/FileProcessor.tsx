@@ -173,7 +173,11 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       targetFileName = `${selectedFile.name}.fortknox`;
     } else {
       const stripped = selectedFile.name.replace(/\.fortknox$/i, '');
-      targetFileName = stripped.length > 0 ? stripped : 'decrypted_file';
+      if (stripped.length > 0 && stripped !== selectedFile.name) {
+        targetFileName = stripped;
+      } else {
+        targetFileName = `decrypted_${selectedFile.name.length > 0 ? selectedFile.name : 'file'}`;
+      }
     }
 
     if (hasFileSystemAccess && useDirectDiskWrite) {
@@ -193,6 +197,12 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
           return;
         }
         console.warn('Falling back to memory stream:', pickerErr);
+        if (selectedFile.size > maxSafeBytes) {
+          setError(
+            `Memory limit notice: In-memory fallback cannot safely buffer files larger than ${(maxSafeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB without risk of browser tab crash. Please choose a writable destination or process a smaller file.`
+          );
+          return;
+        }
         setStreamedDirectToDisk(false);
       }
     }

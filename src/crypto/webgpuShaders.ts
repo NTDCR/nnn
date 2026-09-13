@@ -76,26 +76,29 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   let wordOffset = blockIdx * 16u;
   let totalWords = (params.dataLen + 3u) / 4u;
 
-  if (wordOffset + 16u <= totalWords) {
-    data[wordOffset + 0u] ^= a.x;
-    data[wordOffset + 1u] ^= a.y;
-    data[wordOffset + 2u] ^= a.z;
-    data[wordOffset + 3u] ^= a.w;
+  var ks: array<u32, 16>;
+  ks[0] = a.x; ks[1] = a.y; ks[2] = a.z; ks[3] = a.w;
+  ks[4] = b.x; ks[5] = b.y; ks[6] = b.z; ks[7] = b.w;
+  ks[8] = c.x; ks[9] = c.y; ks[10] = c.z; ks[11] = c.w;
+  ks[12] = d.x; ks[13] = d.y; ks[14] = d.z; ks[15] = d.w;
 
-    data[wordOffset + 4u] ^= b.x;
-    data[wordOffset + 5u] ^= b.y;
-    data[wordOffset + 6u] ^= b.z;
-    data[wordOffset + 7u] ^= b.w;
-
-    data[wordOffset + 8u] ^= c.x;
-    data[wordOffset + 9u] ^= c.y;
-    data[wordOffset + 10u] ^= c.z;
-    data[wordOffset + 11u] ^= c.w;
-
-    data[wordOffset + 12u] ^= d.x;
-    data[wordOffset + 13u] ^= d.y;
-    data[wordOffset + 14u] ^= d.z;
-    data[wordOffset + 15u] ^= d.w;
+  let fullWords = params.dataLen / 4u;
+  for (var i: u32 = 0u; i < 16u; i = i + 1u) {
+    let currWord = wordOffset + i;
+    if (currWord < fullWords) {
+      data[currWord] ^= ks[i];
+    } else if (currWord == fullWords && (params.dataLen & 3u) != 0u) {
+      let rem = params.dataLen & 3u;
+      var mask: u32 = 0u;
+      if (rem == 1u) {
+        mask = 0x000000FFu;
+      } else if (rem == 2u) {
+        mask = 0x0000FFFFu;
+      } else if (rem == 3u) {
+        mask = 0x00FFFFFFu;
+      }
+      data[currWord] ^= (ks[i] & mask);
+    }
   }
 }
 `;
@@ -132,6 +135,14 @@ fn rotl64(v: vec2<u32>, r: u32) -> vec2<u32> {
       (v.y << s) | (v.x >> (32u - s)),
       (v.x << s) | (v.y >> (32u - s))
     );
+  }
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+  let blockIdx = global_id.x;
+  if (blockIdx >= params.chunkBlocks) {
+    return;
   }
 }
 `;
