@@ -346,6 +346,26 @@ async function executePoolEncryption(params: {
     return windowBytes / (1024 * 1024) / windowSec;
   };
 
+  // Setup permanent message dispatch router for each worker (eliminates per-chunk addEventListener/removeEventListener churn)
+  const pendingEncMap = new Map<number, { resolve: (data: ArrayBuffer) => void; reject: (err: Error) => void }>();
+  workers.forEach((w) => {
+    w.onmessage = (e: MessageEvent) => {
+      if (e.data.type === 'CHUNK_DONE') {
+        const p = pendingEncMap.get(e.data.chunkIndex);
+        if (p) {
+          pendingEncMap.delete(e.data.chunkIndex);
+          p.resolve(e.data.data);
+        }
+      } else if (e.data.type === 'ERROR') {
+        const err = new Error(e.data.error || 'Chunk encryption failed');
+        for (const p of pendingEncMap.values()) {
+          p.reject(err);
+        }
+        pendingEncMap.clear();
+      }
+    };
+  });
+
   // Dispatch chunks across workers
   let nextDispatchChunk = 0;
 
@@ -375,16 +395,7 @@ async function executePoolEncryption(params: {
 
       // Delegate chunk encryption to worker thread
       const encryptedBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-        const handler = (e: MessageEvent) => {
-          if (e.data.type === 'CHUNK_DONE' && e.data.chunkIndex === idx) {
-            worker.removeEventListener('message', handler);
-            resolve(e.data.data);
-          } else if (e.data.type === 'ERROR') {
-            worker.removeEventListener('message', handler);
-            reject(new Error(e.data.error || 'Chunk encryption failed'));
-          }
-        };
-        worker.addEventListener('message', handler);
+        pendingEncMap.set(idx, { resolve, reject });
         worker.postMessage(
           {
             action: 'ENCRYPT_CHUNK',
@@ -624,6 +635,26 @@ async function executePoolDecryption(params: {
     return slicePrefetchMap.get(chunkIdx)!;
   };
 
+  // Setup permanent message dispatch router for each worker (eliminates per-chunk addEventListener/removeEventListener churn)
+  const pendingDecMap = new Map<number, { resolve: (data: ArrayBuffer) => void; reject: (err: Error) => void }>();
+  workers.forEach((w) => {
+    w.onmessage = (e: MessageEvent) => {
+      if (e.data.type === 'CHUNK_DONE') {
+        const p = pendingDecMap.get(e.data.chunkIndex);
+        if (p) {
+          pendingDecMap.delete(e.data.chunkIndex);
+          p.resolve(e.data.data);
+        }
+      } else if (e.data.type === 'ERROR') {
+        const err = new Error(GENERIC_DECRYPT_ERROR);
+        for (const p of pendingDecMap.values()) {
+          p.reject(err);
+        }
+        pendingDecMap.clear();
+      }
+    };
+  });
+
   let nextDispatchChunk = 0;
 
   const dispatchToWorker = async (worker: Worker) => {
@@ -644,16 +675,7 @@ async function executePoolDecryption(params: {
       }
 
       const plainBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-        const handler = (e: MessageEvent) => {
-          if (e.data.type === 'CHUNK_DONE' && e.data.chunkIndex === idx) {
-            worker.removeEventListener('message', handler);
-            resolve(e.data.data);
-          } else if (e.data.type === 'ERROR') {
-            worker.removeEventListener('message', handler);
-            reject(new Error(GENERIC_DECRYPT_ERROR));
-          }
-        };
-        worker.addEventListener('message', handler);
+        pendingDecMap.set(idx, { resolve, reject });
         worker.postMessage(
           {
             action: 'DECRYPT_CHUNK',
