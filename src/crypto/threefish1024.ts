@@ -18,7 +18,8 @@ const ROTATIONS: readonly (readonly number[])[] = [
   [9, 48, 35, 52, 23, 31, 37, 20],
 ];
 
-const PERMUTATION: readonly number[] = [0, 9, 2, 13, 6, 11, 4, 15, 10, 7, 12, 3, 14, 5, 8, 1];
+const MIX_DST_P: readonly number[] = [0, 4, 12, 8, 20, 24, 28, 16];
+const MIX_DST_Q: readonly number[] = [18, 26, 22, 30, 14, 6, 10, 2];
 
 export class Threefish1024 {
   // 21 subkeys, each containing 32 32-bit words (16 low/high pairs)
@@ -180,20 +181,16 @@ export class Threefish1024 {
           rotH = ((bl << r2) | (bh >>> (32 - r2))) >>> 0;
         }
 
-        // 64-bit XOR: (Wq <<< R) ^ (Wp + Wq)
-        pCur[q] = (rotL ^ sumL) >>> 0;
-        pCur[q + 1] = (rotH ^ sumH) >>> 0;
+        // Fused MIX + Permutation: write directly into pNxt at target word positions
+        const dstP = MIX_DST_P[j];
+        const dstQ = MIX_DST_Q[j];
+        pNxt[dstP] = sumL;
+        pNxt[dstP + 1] = sumH;
+        pNxt[dstQ] = (rotL ^ sumL) >>> 0;
+        pNxt[dstQ + 1] = (rotH ^ sumH) >>> 0;
       }
 
-      // Permutation into nxt buffer
-      for (let i = 0; i < 16; i++) {
-        const src = i << 1;
-        const dst = PERMUTATION[i] << 1;
-        pNxt[dst] = pCur[src];
-        pNxt[dst + 1] = pCur[src + 1];
-      }
-
-      // Swap ping-pong buffers
+      // Swap ping-pong buffers (permutation loop is 100% eliminated)
       const tmp = pCur;
       pCur = pNxt;
       pNxt = tmp;
@@ -244,6 +241,10 @@ export class Threefish1024 {
     // Pre-slice 16-byte nonce once outside the 8,192-iteration block loop
     const nonce16 = baseNonce.subarray(0, 16);
 
+    const canUseU32 = (data.byteOffset % 4 === 0) && (data.length % 4 === 0);
+    const dataU32 = canUseU32 ? new Uint32Array(data.buffer, data.byteOffset, data.length >>> 2) : null;
+    const blockU32 = this.blockU32;
+
     for (let offset = 0; offset < data.length; offset += BLOCK_SIZE) {
       blockBuffer.fill(0);
       blockBuffer.set(nonce16, 0);
@@ -253,7 +254,12 @@ export class Threefish1024 {
       this.encryptBlock(blockBuffer);
 
       const chunkLen = Math.min(BLOCK_SIZE, data.length - offset);
-      if (chunkLen === BLOCK_SIZE) {
+      if (chunkLen === BLOCK_SIZE && dataU32) {
+        const wordBase = offset >>> 2;
+        for (let i = 0; i < 32; i++) {
+          dataU32[wordBase + i] ^= blockU32[i];
+        }
+      } else if (chunkLen === BLOCK_SIZE) {
         // Fast 32-bit vector word XORing (32 x 32-bit operations)
         for (let i = 0; i < 32; i++) {
           const bytePos = offset + (i << 2);
@@ -263,7 +269,11 @@ export class Threefish1024 {
         // Tail byte handling for partial final block
         let i = 0;
         while (i + 4 <= chunkLen) {
-          dataView.setUint32(offset + i, dataView.getUint32(offset + i, true) ^ blockView.getUint32(i, true), true);
+          if (dataU32) {
+            dataU32[(offset >>> 2) + (i >>> 2)] ^= blockU32[i >>> 2];
+          } else {
+            dataView.setUint32(offset + i, dataView.getUint32(offset + i, true) ^ blockView.getUint32(i, true), true);
+          }
           i += 4;
         }
         while (i < chunkLen) {

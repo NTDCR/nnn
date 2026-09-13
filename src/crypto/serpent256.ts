@@ -114,12 +114,14 @@ export class Serpent256 {
   private sboxOut: [number, number, number, number] = [0, 0, 0, 0];
   private blockBuffer: Uint8Array = new Uint8Array(16);
   private blockView: DataView;
+  private blockU32: Uint32Array;
 
   constructor(keyBytes: Uint8Array) {
     if (keyBytes.length !== 32) {
       throw new Error('Serpent-256 requires exactly 32 bytes key');
     }
     this.blockView = new DataView(this.blockBuffer.buffer);
+    this.blockU32 = new Uint32Array(this.blockBuffer.buffer);
 
     const w = new Uint32Array(140);
     const keyView = new DataView(keyBytes.buffer, keyBytes.byteOffset, keyBytes.byteLength);
@@ -223,6 +225,10 @@ export class Serpent256 {
     // Pre-slice 8-byte nonce once outside the 65,536-iteration block loop
     const nonce8 = baseNonce.subarray(0, 8);
 
+    const canUseU32 = (data.byteOffset % 4 === 0) && (data.length % 4 === 0);
+    const dataU32 = canUseU32 ? new Uint32Array(data.buffer, data.byteOffset, data.length >>> 2) : null;
+    const blockU32 = this.blockU32;
+
     for (let offset = 0; offset < data.length; offset += BLOCK_SIZE) {
       blockBuffer.set(nonce8, 0);
       blockView.setBigUint64(8, counter, true);
@@ -230,7 +236,13 @@ export class Serpent256 {
       this.encryptBlock(blockBuffer);
 
       const chunkLen = Math.min(BLOCK_SIZE, data.length - offset);
-      if (chunkLen === BLOCK_SIZE) {
+      if (chunkLen === BLOCK_SIZE && dataU32) {
+        const w = offset >>> 2;
+        dataU32[w] ^= blockU32[0];
+        dataU32[w + 1] ^= blockU32[1];
+        dataU32[w + 2] ^= blockU32[2];
+        dataU32[w + 3] ^= blockU32[3];
+      } else if (chunkLen === BLOCK_SIZE) {
         // Fast SIMD vector XOR (2 x 64-bit word operations)
         dataView.setBigUint64(offset, dataView.getBigUint64(offset, true) ^ blockView.getBigUint64(0, true), true);
         dataView.setBigUint64(offset + 8, dataView.getBigUint64(offset + 8, true) ^ blockView.getBigUint64(8, true), true);
@@ -238,7 +250,11 @@ export class Serpent256 {
         // Tail byte handling for partial final block
         let i = 0;
         while (i + 4 <= chunkLen) {
-          dataView.setUint32(offset + i, dataView.getUint32(offset + i, true) ^ blockView.getUint32(i, true), true);
+          if (dataU32) {
+            dataU32[(offset >>> 2) + (i >>> 2)] ^= blockU32[i >>> 2];
+          } else {
+            dataView.setUint32(offset + i, dataView.getUint32(offset + i, true) ^ blockView.getUint32(i, true), true);
+          }
           i += 4;
         }
         while (i < chunkLen) {
