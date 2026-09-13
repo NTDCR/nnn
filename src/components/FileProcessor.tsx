@@ -234,7 +234,11 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         const single = diskWriteBuffer[0];
         diskWriteBuffer = [];
         diskBufferedBytes = 0;
-        await writableStreamRef.current.write(single);
+        try {
+          await writableStreamRef.current.write(single);
+        } finally {
+          single.fill(0);
+        }
         return;
       }
       const coalesced = new Uint8Array(diskBufferedBytes);
@@ -242,10 +246,15 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       for (let b = 0; b < diskWriteBuffer.length; b++) {
         coalesced.set(diskWriteBuffer[b], offset);
         offset += diskWriteBuffer[b].length;
+        diskWriteBuffer[b].fill(0);
       }
       diskWriteBuffer = [];
       diskBufferedBytes = 0;
-      await writableStreamRef.current.write(coalesced);
+      try {
+        await writableStreamRef.current.write(coalesced);
+      } finally {
+        coalesced.fill(0);
+      }
     };
 
     try {

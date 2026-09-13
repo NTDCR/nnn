@@ -40,8 +40,99 @@ interface WorkerProbeResult {
   elapsedMs: number;
 }
 
-// Cached core profile so calibration probe runs strictly ONCE per application session (~3ms overhead)
-let cachedCalibratedWorkers: number | null = null;
+/**
+ * Dedicated high-speed client for background HMAC-SHA256 streaming worker.
+ * Offloads continuous plaintext integrity calculation completely from the main thread event loop.
+ */
+export class HmacWorkerClient {
+  private worker: Worker | null = null;
+  private fallbackHasher: ReturnType<typeof hmac.create> | null = null;
+  private fallbackPending = new Map<number, Uint8Array>();
+  private nextExpectedChunk = 0;
+  private digestPromise: Promise<Uint8Array> | null = null;
+  private digestResolve: ((digest: Uint8Array) => void) | null = null;
+  private digestReject: ((err: Error) => void) | null = null;
+
+  constructor(hmacKey: Uint8Array) {
+    try {
+      if (typeof Worker !== 'undefined') {
+        this.worker = new Worker(new URL('./hmacWorker.ts', import.meta.url), { type: 'module' });
+        this.worker.onmessage = (e: MessageEvent) => {
+          if (e.data?.type === 'DIGEST_DONE' && e.data?.digest) {
+            this.digestResolve?.(new Uint8Array(e.data.digest));
+          }
+        };
+        this.worker.onerror = (e) => {
+          this.digestReject?.(new Error(e?.message || 'HMAC worker error'));
+        };
+        const keyCopy = new Uint8Array(hmacKey);
+        this.worker.postMessage({ action: 'INIT_HMAC', key: keyCopy.buffer }, [keyCopy.buffer]);
+      } else {
+        this.fallbackHasher = hmac.create(sha256, hmacKey);
+      }
+    } catch {
+      this.fallbackHasher = hmac.create(sha256, hmacKey);
+    }
+  }
+
+  public updateChunk(chunkIndex: number, chunkBytes: Uint8Array): void {
+    if (this.worker) {
+      const buf = chunkBytes.buffer.slice(chunkBytes.byteOffset, chunkBytes.byteOffset + chunkBytes.byteLength);
+      this.worker.postMessage({ action: 'UPDATE_CHUNK', chunkIndex, chunkData: buf }, [buf]);
+    } else if (this.fallbackHasher) {
+      this.fallbackPending.set(chunkIndex, new Uint8Array(chunkBytes));
+      this.drainFallback();
+    }
+  }
+
+  private drainFallback(): void {
+    if (!this.fallbackHasher) return;
+    while (this.fallbackPending.has(this.nextExpectedChunk)) {
+      const b = this.fallbackPending.get(this.nextExpectedChunk)!;
+      this.fallbackPending.delete(this.nextExpectedChunk);
+      this.fallbackHasher.update(b);
+      b.fill(0);
+      this.nextExpectedChunk++;
+    }
+  }
+
+  public async finalize(totalChunks: number): Promise<Uint8Array> {
+    if (this.worker) {
+      this.digestPromise = new Promise((resolve, reject) => {
+        this.digestResolve = resolve;
+        this.digestReject = reject;
+      });
+      this.worker.postMessage({ action: 'FINALIZE', totalChunks });
+      return await this.digestPromise;
+    } else if (this.fallbackHasher) {
+      this.drainFallback();
+      if (this.nextExpectedChunk < totalChunks) {
+        throw new Error('Incomplete HMAC stream in fallback hasher');
+      }
+      const digest = this.fallbackHasher.digest();
+      this.fallbackHasher = null;
+      return digest;
+    }
+    throw new Error('HMAC client not initialized');
+  }
+
+  public destroy(): void {
+    if (this.worker) {
+      try {
+        this.worker.postMessage({ action: 'DESTROY' });
+      } catch {
+        // Ignore
+      }
+      this.worker.terminate();
+      this.worker = null;
+    }
+    for (const b of this.fallbackPending.values()) {
+      b.fill(0);
+    }
+    this.fallbackPending.clear();
+    this.fallbackHasher = null;
+  }
+}
 
 /**
  * Calibrates the worker pool and strictly filters out Efficiency (E) cores on hybrid CPU architectures.
@@ -127,10 +218,8 @@ async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Wor
       eWorker.terminate();
     }
 
-    cachedCalibratedWorkers = pCoreWorkers.length;
     return pCoreWorkers;
   } catch {
-    cachedCalibratedWorkers = Math.min(candidateWorkers.length, 2);
     return candidateWorkers;
   }
 }
@@ -163,24 +252,18 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
     if (!isMultiChunk) {
       targetWorkerCount = 1;
     } else if (coreConcurrency === 'webgpu') {
-      targetWorkerCount = isMobileDevice ? 2 : Math.min(hardwareConcurrency, 8);
+      targetWorkerCount = isMobileDevice ? 2 : Math.min(hardwareConcurrency, 16);
     } else if (coreConcurrency === 2 || coreConcurrency === 4 || coreConcurrency === 6 || coreConcurrency === 8) {
       targetWorkerCount = coreConcurrency;
     } else {
       // 'auto' mode:
       if (isMobileDevice) {
-        // Mobile heterogeneous SoCs (e.g. Samsung Exynos 1280 on Galaxy M34 5G) feature 2x Cortex-A78 P-cores + 6x Cortex-A55 E-cores.
-        // Assigning exactly 2 workers allows Android EAS to pin them strictly to the 2 Performance cores,
-        // completely eliminating E-core head-of-line stalls and thermal throttling.
         targetWorkerCount = 2;
       } else if (hardwareConcurrency <= 4) {
         targetWorkerCount = Math.max(2, hardwareConcurrency);
-      } else if (cachedCalibratedWorkers !== null) {
-        targetWorkerCount = cachedCalibratedWorkers;
       } else {
-        // Probe candidate workers up to hardware capacity (capped at 8)
-        const candidates = hardwareConcurrency >= 8 ? 8 : (hardwareConcurrency >= 6 ? 6 : 4);
-        targetWorkerCount = candidates;
+        // Modern multi-core: uncapped up to 16 threads without down-throttling
+        targetWorkerCount = Math.min(hardwareConcurrency, 16);
       }
     }
 
@@ -238,9 +321,9 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     if (signal?.aborted) throw new Error('Aborted');
 
-    // Strict P-Core Enforcement: Calibrate strictly once when in 'auto' or 'webgpu' mode and system has > 4 threads on desktop
+    // Dynamic P-Core Calibration for hybrid architectures on desktop
     let activeWorkers = workers;
-    if (isMultiChunk && workers.length > 4 && (coreConcurrency === 'auto' || coreConcurrency === 'webgpu') && !isMobileDevice && cachedCalibratedWorkers === null) {
+    if (isMultiChunk && workers.length > 4 && (coreConcurrency === 'auto' || coreConcurrency === 'webgpu') && !isMobileDevice) {
       activeWorkers = await calibrateAndFilterPCores(workers);
     }
 
@@ -304,7 +387,7 @@ async function executePoolEncryption(params: {
   const chunkCount = Math.max(1, Math.ceil(originalSize / CHUNK_SIZE));
 
   let hmacKey: Uint8Array | null = deriveHmacKey(k1, k2);
-  const hmacHasher = hmac.create(sha256, hmacKey);
+  const hmacClient = new HmacWorkerClient(hmacKey);
 
   const nonceThreefish = new Uint8Array(16);
   const nonceSerpent = new Uint8Array(16);
@@ -325,19 +408,6 @@ async function executePoolEncryption(params: {
   // Strict sequential reassembly sequencer
   let nextEmitChunk = 0;
   const completedChunks = new Map<number, Uint8Array>();
-
-  // Strict sequential HMAC digest calculation
-  let nextHmacChunk = 0;
-  const rawChunkMap = new Map<number, Uint8Array>();
-  const updateSequentialHmac = (chunkIdx: number, bytes: Uint8Array) => {
-    rawChunkMap.set(chunkIdx, bytes);
-    while (rawChunkMap.has(nextHmacChunk)) {
-      const b = rawChunkMap.get(nextHmacChunk)!;
-      rawChunkMap.delete(nextHmacChunk);
-      hmacHasher.update(b);
-      nextHmacChunk++;
-    }
-  };
 
   // Background pipelined chunk prefetcher (eliminates storage read latency)
   const slicePrefetchMap = new Map<number, Promise<ArrayBuffer>>();
@@ -479,14 +549,16 @@ async function executePoolEncryption(params: {
       slicePrefetchMap.delete(idx);
       const rawBytes = new Uint8Array(rawBuffer);
 
-      // Feed to strictly sequenced HMAC
-      updateSequentialHmac(idx, rawBytes);
-
       const chunkWithTags = new Uint8Array(ENCRYPTED_CHUNK_SIZE);
       chunkWithTags.set(rawBytes, 0);
       if (rawBytes.length < CHUNK_SIZE) {
         fillRandomBytes(chunkWithTags.subarray(rawBytes.length, CHUNK_SIZE));
       }
+
+      // Offload to background HMAC worker without blocking main event loop
+      hmacClient.updateChunk(idx, rawBytes);
+      const rawLen = rawBytes.length;
+      rawBytes.fill(0);
 
       // Delegate chunk encryption to worker thread
       const encryptedBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -524,8 +596,8 @@ async function executePoolEncryption(params: {
       if (writerError) throw writerError;
       if (workerError) throw workerError;
 
-      processedBytes += rawBytes.length;
-      const speedMBs = calculateLiveSpeed(rawBytes.length);
+      processedBytes += rawLen;
+      const speedMBs = calculateLiveSpeed(rawLen);
       const remainingChunks = chunkCount - completedChunksCount;
       const etaSeconds = speedMBs > 0 ? (remainingChunks * (CHUNK_SIZE / (1024 * 1024))) / speedMBs : 0;
 
@@ -562,10 +634,7 @@ async function executePoolEncryption(params: {
   });
 
   // Finalize container metadata & tail pointer
-  if (nextHmacChunk < chunkCount) {
-    throw new Error('Incomplete encryption stream');
-  }
-  const hmacIntegrity = hmacHasher.digest();
+  const hmacIntegrity = await hmacClient.finalize(chunkCount);
   const orderHash = sha256(new TextEncoder().encode(CASCADE_ORDER_TAG_STRING));
 
   const metadata = encodeMetadataBlob({
@@ -582,13 +651,24 @@ async function executePoolEncryption(params: {
     orderConfirm: orderHash,
   });
 
-  const maskedMeta = await maskMetadataBlob(metadata, k4);
+  let maskedMeta: Uint8Array;
+  try {
+    maskedMeta = await maskMetadataBlob(metadata, k4);
+  } finally {
+    metadata.fill(0);
+  }
+
   const salt16 = new Uint8Array(maskedMeta.subarray(maskedMeta.length - 16));
   const metadataOffset = chunkCount * ENCRYPTED_CHUNK_SIZE;
   const tailPointer = await encryptTailPointer(metadataOffset, METADATA_SIZE, k4, salt16);
 
-  await onChunkOutput(maskedMeta);
-  await onChunkOutput(tailPointer);
+  try {
+    await onChunkOutput(maskedMeta);
+    await onChunkOutput(tailPointer);
+  } finally {
+    maskedMeta.fill(0);
+    tailPointer.fill(0);
+  }
 
   const totalTimeMs = performance.now() - startTime;
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);
@@ -603,6 +683,7 @@ async function executePoolEncryption(params: {
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),
   };
   } finally {
+    hmacClient.destroy();
     if (hmacKey) {
       hmacKey.fill(0);
       hmacKey = null;
@@ -611,10 +692,7 @@ async function executePoolEncryption(params: {
       b.fill(0);
     }
     completedChunks.clear();
-    for (const b of rawChunkMap.values()) {
-      b.fill(0);
-    }
-    rawChunkMap.clear();
+    slicePrefetchMap.clear();
 
     signal?.removeEventListener('abort', onAbort);
     const cancelErr = new Error(signal?.aborted ? 'Aborted' : 'Encryption stream interrupted');
@@ -687,7 +765,7 @@ async function executePoolDecryption(params: {
   }
 
   let hmacKey: Uint8Array | null = deriveHmacKey(k1, k2);
-  const hmacHasher = hmac.create(sha256, hmacKey);
+  const hmacClient = new HmacWorkerClient(hmacKey);
 
   onStart?.(chunkCount, originalSize);
 
@@ -697,19 +775,6 @@ async function executePoolDecryption(params: {
   // Strict sequential reassembly sequencer
   let nextEmitChunk = 0;
   const completedChunks = new Map<number, Uint8Array>();
-
-  // Strict sequential HMAC digest calculation (runs concurrently with output writes)
-  let nextHmacChunk = 0;
-  const rawHmacMap = new Map<number, Uint8Array>();
-  const updateSequentialHmac = (chunkIdx: number, bytes: Uint8Array) => {
-    rawHmacMap.set(chunkIdx, bytes);
-    while (rawHmacMap.has(nextHmacChunk)) {
-      const b = rawHmacMap.get(nextHmacChunk)!;
-      rawHmacMap.delete(nextHmacChunk);
-      hmacHasher.update(b);
-      nextHmacChunk++;
-    }
-  };
 
   // Asynchronous background writer to decouple storage/disk I/O from worker ALU computation
   let writerPromise: Promise<void> = Promise.resolve();
@@ -874,9 +939,12 @@ async function executePoolDecryption(params: {
       const validLen = isLast ? originalSize - (chunkCount - 1) * CHUNK_SIZE : CHUNK_SIZE;
       const plainBytes = new Uint8Array(plainBuffer);
       const finalBytes = plainBytes.subarray(0, validLen);
+      if (isLast && validLen < CHUNK_SIZE) {
+        plainBytes.subarray(validLen).fill(0);
+      }
 
-      // Decoupled concurrent HMAC computation (runs immediately without blocking writer)
-      updateSequentialHmac(idx, finalBytes);
+      // Decoupled concurrent HMAC computation in background worker
+      hmacClient.updateChunk(idx, finalBytes);
 
       completedChunks.set(idx, finalBytes);
       drainReadyChunks();
@@ -934,13 +1002,8 @@ async function executePoolDecryption(params: {
     etaSeconds: 0,
   });
 
-  // Ensure all HMAC chunks have been processed
-  if (nextHmacChunk < chunkCount) {
-    throw new Error(GENERIC_DECRYPT_ERROR);
-  }
-
   // Adversarial check: Verify HMAC integrity of entire recovered plaintext
-  const computedHmac = hmacHasher.digest();
+  const computedHmac = await hmacClient.finalize(chunkCount);
   if (!constantTimeCompare(computedHmac, metadata.hmacIntegrity)) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
@@ -963,6 +1026,7 @@ async function executePoolDecryption(params: {
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),
   };
   } finally {
+    hmacClient.destroy();
     if (hmacKey) {
       hmacKey.fill(0);
       hmacKey = null;
@@ -971,10 +1035,7 @@ async function executePoolDecryption(params: {
       b.fill(0);
     }
     completedChunks.clear();
-    for (const b of rawHmacMap.values()) {
-      b.fill(0);
-    }
-    rawHmacMap.clear();
+    slicePrefetchMap.clear();
 
     signal?.removeEventListener('abort', onAbort);
     const cancelErr = new Error(signal?.aborted ? 'Aborted' : GENERIC_DECRYPT_ERROR);
