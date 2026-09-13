@@ -48,15 +48,22 @@ jobs:
           force_orphan: true
 
       - name: Setup Pages
+        id: pages
         uses: actions/configure-pages@v5
+        continue-on-error: true
+        with:
+          enablement: true
 
       - name: Upload artifact
+        if: steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
+        continue-on-error: true
         with:
           path: './dist'
 
       - name: Deploy to GitHub Pages (Actions Environment)
         id: deployment
+        if: steps.pages.outcome == 'success'
         uses: actions/deploy-pages@v4
         continue-on-error: true
         with:
