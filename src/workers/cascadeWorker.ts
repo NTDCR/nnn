@@ -31,6 +31,29 @@ self.onmessage = async (e: MessageEvent) => {
       const k3 = hexToBytes(keys.layer3ChaChaHex, 32);
       const k4 = hexToBytes(keys.layer4AesHex, 32);
       pooledEngine = await createCascadeEngine(k1, k2, k3, k4);
+
+      // Micro-warmup pass to tier up V8 TurboFan / WebAssembly for immediate peak bidirectional speed
+      const warmBuf = new Uint8Array(65536);
+      const warmNonce = new Uint8Array(16);
+      const warmEnc = await pooledEngine.encryptChunk(
+        warmBuf,
+        0,
+        warmNonce,
+        warmNonce,
+        warmNonce.subarray(0, 12),
+        warmNonce.subarray(0, 12)
+      );
+      await pooledEngine.decryptChunk(
+        warmEnc.ciphertext,
+        0,
+        warmNonce,
+        warmNonce,
+        warmNonce.subarray(0, 12),
+        warmNonce.subarray(0, 12),
+        warmEnc.tagChaCha,
+        warmEnc.tagAes
+      );
+
       self.postMessage({ type: 'POOL_READY' });
     } catch (err: unknown) {
       self.postMessage({ type: 'ERROR', error: err instanceof Error ? err.message : 'Pool init failed' });
@@ -44,14 +67,24 @@ self.onmessage = async (e: MessageEvent) => {
       const probeBuf = new Uint8Array(131072);
       const probeNonce = new Uint8Array(16);
 
-      // Warmup pass to trigger V8 TurboFan / WebKit FTL tier-up compilation
-      await pooledEngine.encryptChunk(
+      // Warmup pass to trigger V8 TurboFan / WebKit FTL tier-up compilation for BOTH Encrypt & Decrypt
+      const enc = await pooledEngine.encryptChunk(
         probeBuf,
         0,
         probeNonce,
         probeNonce,
         probeNonce.subarray(0, 12),
         probeNonce.subarray(0, 12)
+      );
+      await pooledEngine.decryptChunk(
+        enc.ciphertext,
+        0,
+        probeNonce,
+        probeNonce,
+        probeNonce.subarray(0, 12),
+        probeNonce.subarray(0, 12),
+        enc.tagChaCha,
+        enc.tagAes
       );
 
       // Measured benchmark pass

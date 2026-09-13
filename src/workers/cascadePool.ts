@@ -570,6 +570,19 @@ async function executePoolDecryption(params: {
   let nextEmitChunk = 0;
   const completedChunks = new Map<number, Uint8Array>();
 
+  // Strict sequential HMAC digest calculation (runs concurrently with output writes)
+  let nextHmacChunk = 0;
+  const rawHmacMap = new Map<number, Uint8Array>();
+  const updateSequentialHmac = (chunkIdx: number, bytes: Uint8Array) => {
+    rawHmacMap.set(chunkIdx, bytes);
+    while (rawHmacMap.has(nextHmacChunk)) {
+      const b = rawHmacMap.get(nextHmacChunk)!;
+      rawHmacMap.delete(nextHmacChunk);
+      hmacHasher.update(b);
+      nextHmacChunk++;
+    }
+  };
+
   // Asynchronous background writer to decouple storage/disk I/O from worker ALU computation
   let writerPromise: Promise<void> = Promise.resolve();
   let writerError: Error | null = null;
@@ -586,17 +599,11 @@ async function executePoolDecryption(params: {
     writerPromise = writerPromise.then(async () => {
       while (completedChunks.has(nextEmitChunk)) {
         if (signal?.aborted) throw new Error('Aborted');
-        const plainChunk = completedChunks.get(nextEmitChunk)!;
+        const finalBytes = completedChunks.get(nextEmitChunk)!;
         completedChunks.delete(nextEmitChunk);
 
-        const isLast = nextEmitChunk === chunkCount - 1;
-        const validLen = isLast ? originalSize - (chunkCount - 1) * CHUNK_SIZE : CHUNK_SIZE;
-        const finalBytes = plainChunk.subarray(0, validLen);
-
-        hmacHasher.update(finalBytes);
         await onChunkOutput(finalBytes);
 
-        processedBytes += finalBytes.length;
         nextEmitChunk++;
         notifyDrain();
       }
@@ -704,7 +711,15 @@ async function executePoolDecryption(params: {
         );
       });
 
-      completedChunks.set(idx, new Uint8Array(plainBuffer));
+      const isLast = idx === chunkCount - 1;
+      const validLen = isLast ? originalSize - (chunkCount - 1) * CHUNK_SIZE : CHUNK_SIZE;
+      const plainBytes = new Uint8Array(plainBuffer);
+      const finalBytes = plainBytes.subarray(0, validLen);
+
+      // Decoupled concurrent HMAC computation (runs immediately without blocking writer)
+      updateSequentialHmac(idx, finalBytes);
+
+      completedChunks.set(idx, finalBytes);
       drainReadyChunks();
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
@@ -721,7 +736,8 @@ async function executePoolDecryption(params: {
       }
       if (writerError) throw writerError;
 
-      const speedMBs = calculateLiveSpeed(encBuffer.byteLength);
+      processedBytes += validLen;
+      const speedMBs = calculateLiveSpeed(validLen);
       const remainingChunks = chunkCount - (idx + 1);
       const etaSeconds = speedMBs > 0 ? (remainingChunks * (CHUNK_SIZE / (1024 * 1024))) / speedMBs : 0;
 
@@ -743,6 +759,11 @@ async function executePoolDecryption(params: {
   drainReadyChunks();
   await writerPromise;
   if (writerError) throw writerError;
+
+  // Ensure all HMAC chunks have been processed
+  if (nextHmacChunk < chunkCount) {
+    throw new Error(GENERIC_DECRYPT_ERROR);
+  }
 
   // Adversarial check: Verify HMAC integrity of entire recovered plaintext
   const computedHmac = hmacHasher.digest();
