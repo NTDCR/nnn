@@ -198,9 +198,16 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
           layer4AesHex: k4,
         },
         coreConcurrency: coreMode,
-        onProgress: (p) => {
-          setProgress(p);
-        },
+        onProgress: (() => {
+          let lastProgressTime = 0;
+          return (p: Parameters<NonNullable<Parameters<typeof processFileWithPool>[0]['onProgress']>>[0]) => {
+            const now = performance.now();
+            if (p.currentChunk === p.totalChunks || now - lastProgressTime >= 100) {
+              lastProgressTime = now;
+              setProgress(p);
+            }
+          };
+        })(),
         onChunkOutput: async (chunkBytes: Uint8Array) => {
           if (writableStreamRef.current) {
             await writableStreamRef.current.write(chunkBytes);

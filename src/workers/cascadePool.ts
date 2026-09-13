@@ -291,6 +291,14 @@ async function executePoolEncryption(params: {
   // Asynchronous background writer to decouple storage/disk I/O from worker ALU computation
   let writerPromise: Promise<void> = Promise.resolve();
   let writerError: Error | null = null;
+  const backpressureWaiters: (() => void)[] = [];
+
+  const notifyDrain = () => {
+    while (backpressureWaiters.length > 0) {
+      const wake = backpressureWaiters.shift();
+      wake?.();
+    }
+  };
 
   const drainReadyChunks = () => {
     writerPromise = writerPromise.then(async () => {
@@ -300,10 +308,42 @@ async function executePoolEncryption(params: {
         completedChunks.delete(nextEmitChunk);
         await onChunkOutput(chunk);
         nextEmitChunk++;
+        notifyDrain();
       }
     }).catch((err) => {
       writerError = err instanceof Error ? err : new Error(String(err));
+      notifyDrain();
     });
+  };
+
+  // Real-time sliding window speed calculation (2.5s window)
+  interface SpeedSample {
+    time: number;
+    bytes: number;
+  }
+  const speedSamples: SpeedSample[] = [];
+  const WINDOW_MS = 2500;
+
+  const calculateLiveSpeed = (chunkBytes: number): number => {
+    const now = performance.now();
+    speedSamples.push({ time: now, bytes: chunkBytes });
+    while (speedSamples.length > 1 && now - speedSamples[0].time > WINDOW_MS) {
+      speedSamples.shift();
+    }
+    if (speedSamples.length < 2) {
+      const elapsed = Math.max(0.01, (now - startTime) / 1000);
+      return processedBytes / (1024 * 1024) / elapsed;
+    }
+    const windowSec = (now - speedSamples[0].time) / 1000;
+    if (windowSec < 0.05) {
+      const elapsed = Math.max(0.01, (now - startTime) / 1000);
+      return processedBytes / (1024 * 1024) / elapsed;
+    }
+    let windowBytes = 0;
+    for (let i = 1; i < speedSamples.length; i++) {
+      windowBytes += speedSamples[i].bytes;
+    }
+    return windowBytes / (1024 * 1024) / windowSec;
   };
 
   // Dispatch chunks across workers
@@ -362,16 +402,22 @@ async function executePoolEncryption(params: {
       completedChunks.set(idx, new Uint8Array(encryptedBuffer));
       drainReadyChunks();
 
-      // Backpressure control: prevent excessive memory buildup while maintaining full CPU saturation
-      while (completedChunks.size >= workers.length * 2 && !writerError) {
+      // Event-driven backpressure: wake instantly via microtask when output writes advance
+      const maxBuffered = Math.max(4, workers.length * 3);
+      while (completedChunks.size >= maxBuffered && !writerError) {
         if (signal?.aborted) throw new Error('Aborted');
-        await new Promise((r) => setTimeout(r, 4));
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 50);
+          backpressureWaiters.push(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
       }
       if (writerError) throw writerError;
 
       processedBytes += rawBytes.length;
-      const elapsedSec = (performance.now() - startTime) / 1000;
-      const speedMBs = processedBytes / (1024 * 1024) / Math.max(0.01, elapsedSec);
+      const speedMBs = calculateLiveSpeed(rawBytes.length);
       const remainingChunks = chunkCount - (idx + 1);
       const etaSeconds = speedMBs > 0 ? (remainingChunks * (CHUNK_SIZE / (1024 * 1024))) / speedMBs : 0;
 
@@ -504,6 +550,14 @@ async function executePoolDecryption(params: {
   // Asynchronous background writer to decouple storage/disk I/O from worker ALU computation
   let writerPromise: Promise<void> = Promise.resolve();
   let writerError: Error | null = null;
+  const backpressureWaiters: (() => void)[] = [];
+
+  const notifyDrain = () => {
+    while (backpressureWaiters.length > 0) {
+      const wake = backpressureWaiters.shift();
+      wake?.();
+    }
+  };
 
   const drainReadyChunks = () => {
     writerPromise = writerPromise.then(async () => {
@@ -521,10 +575,42 @@ async function executePoolDecryption(params: {
 
         processedBytes += finalBytes.length;
         nextEmitChunk++;
+        notifyDrain();
       }
     }).catch((err) => {
       writerError = err instanceof Error ? err : new Error(String(err));
+      notifyDrain();
     });
+  };
+
+  // Real-time sliding window speed calculation (2.5s window)
+  interface SpeedSample {
+    time: number;
+    bytes: number;
+  }
+  const speedSamples: SpeedSample[] = [];
+  const WINDOW_MS = 2500;
+
+  const calculateLiveSpeed = (chunkBytes: number): number => {
+    const now = performance.now();
+    speedSamples.push({ time: now, bytes: chunkBytes });
+    while (speedSamples.length > 1 && now - speedSamples[0].time > WINDOW_MS) {
+      speedSamples.shift();
+    }
+    if (speedSamples.length < 2) {
+      const elapsed = Math.max(0.01, (now - startTime) / 1000);
+      return processedBytes / (1024 * 1024) / elapsed;
+    }
+    const windowSec = (now - speedSamples[0].time) / 1000;
+    if (windowSec < 0.05) {
+      const elapsed = Math.max(0.01, (now - startTime) / 1000);
+      return processedBytes / (1024 * 1024) / elapsed;
+    }
+    let windowBytes = 0;
+    for (let i = 1; i < speedSamples.length; i++) {
+      windowBytes += speedSamples[i].bytes;
+    }
+    return windowBytes / (1024 * 1024) / windowSec;
   };
 
   // Background pipelined chunk prefetcher for encrypted chunks
@@ -585,15 +671,21 @@ async function executePoolDecryption(params: {
       completedChunks.set(idx, new Uint8Array(plainBuffer));
       drainReadyChunks();
 
-      // Backpressure control: prevent excessive memory buildup while maintaining full CPU saturation
-      while (completedChunks.size >= workers.length * 2 && !writerError) {
+      // Event-driven backpressure: wake instantly via microtask when output writes advance
+      const maxBuffered = Math.max(4, workers.length * 3);
+      while (completedChunks.size >= maxBuffered && !writerError) {
         if (signal?.aborted) throw new Error('Aborted');
-        await new Promise((r) => setTimeout(r, 4));
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 50);
+          backpressureWaiters.push(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
       }
       if (writerError) throw writerError;
 
-      const elapsedSec = (performance.now() - startTime) / 1000;
-      const speedMBs = processedBytes / (1024 * 1024) / Math.max(0.01, elapsedSec);
+      const speedMBs = calculateLiveSpeed(encBuffer.byteLength);
       const remainingChunks = chunkCount - (idx + 1);
       const etaSeconds = speedMBs > 0 ? (remainingChunks * (CHUNK_SIZE / (1024 * 1024))) / speedMBs : 0;
 
