@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { CascadeKeys, WorkerProgressMessage, WorkerSuccessMessage, WorkerMessage } from '../types/crypto.ts';
+import { CascadeKeys, WorkerProgressMessage, WorkerSuccessMessage } from '../types/crypto.ts';
+import { processFileWithPool } from '../workers/cascadePool.ts';
 import { ProgressBar } from './ProgressBar.tsx';
 import {
   FileCode,
@@ -28,6 +29,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   const [downloadBlobUrl, setDownloadBlobUrl] = useState<string | null>(null);
   const [streamedDirectToDisk, setStreamedDirectToDisk] = useState<boolean>(false);
 
+  const abortControllerRef = useRef<AbortController | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const writableStreamRef = useRef<FileSystemWritableFileStream | null>(null);
   const chunksCollectorRef = useRef<Uint8Array[]>([]);
@@ -43,9 +45,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     };
   }, [downloadBlobUrl]);
 
-  // Comprehensive unmount cleanup for active worker and open file streams
+  // Comprehensive unmount cleanup for active worker, pool and open file streams
   useEffect(() => {
     return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
@@ -170,160 +176,81 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       }
     }
 
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     setIsProcessing(true);
 
-    // Instantiate Web Worker safely
-    let worker: Worker;
     try {
-      worker = new Worker(new URL('../workers/cascadeWorker.ts', import.meta.url), {
-        type: 'module',
-      });
-      workerRef.current = worker;
-    } catch (workerErr) {
-      console.error('Failed to instantiate cascade worker:', workerErr);
-      setIsProcessing(false);
-      setError('Failed to start cryptographic worker thread. Check browser Web Worker support.');
-      if (writableStreamRef.current) {
-        writableStreamRef.current.abort().catch(() => {});
-        writableStreamRef.current = null;
-      }
-      return;
-    }
-
-    // Sequential write queue to eliminate FileSystemWritableFileStream concurrent write collisions
-    let writeQueue: Promise<void> = Promise.resolve();
-    let diskWriteError: Error | null = null;
-
-    worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
-      const data = e.data;
-
-      if (data.type === 'CHUNK_OUTPUT') {
-        const chunkData = new Uint8Array(data.data);
-        if (writableStreamRef.current && !diskWriteError) {
-          // Zero-RAM streaming: serialize writes sequentially to disk
-          writeQueue = writeQueue.then(async () => {
-            if (writableStreamRef.current && chunkData.length > 0) {
-              await writableStreamRef.current.write(chunkData);
-            }
-          }).catch((wErr) => {
-            console.error('Disk write stream error:', wErr);
-            const errObj = wErr instanceof Error ? wErr : new Error(String(wErr));
-            diskWriteError = errObj;
-            if (workerRef.current) {
-              workerRef.current.terminate();
-              workerRef.current = null;
-            }
-            if (writableStreamRef.current) {
-              try {
-                writableStreamRef.current.abort().catch(() => {});
-              } catch {
-                // Ignore abort error
-              }
-              writableStreamRef.current = null;
-            }
-            chunksCollectorRef.current = [];
-            setIsProcessing(false);
-            setProgress(null);
-            setError(`Disk write failure: ${errObj.message || 'Unable to complete write operation'}`);
-          });
-        } else if (!writableStreamRef.current && !diskWriteError) {
-          // Fallback in-memory collection
-          chunksCollectorRef.current.push(chunkData);
-        }
-      } else if (data.type === 'PROGRESS') {
-        if (!diskWriteError) {
-          setProgress(data as WorkerProgressMessage);
-        }
-      } else if (data.type === 'SUCCESS') {
-        writeQueue.then(async () => {
-          if (diskWriteError) return;
-
-          setIsProcessing(false);
-          setProgress(null);
-
-          // Close writable file stream strictly after all writes resolve
+      const res = await processFileWithPool({
+        action,
+        file: selectedFile,
+        keys: {
+          layer1ThreefishHex: k1,
+          layer2SerpentHex: k2,
+          layer3ChaChaHex: k3,
+          layer4AesHex: k4,
+        },
+        onProgress: (p) => {
+          setProgress(p);
+        },
+        onChunkOutput: async (chunkBytes: Uint8Array) => {
           if (writableStreamRef.current) {
-            await writableStreamRef.current.close();
-            writableStreamRef.current = null;
+            await writableStreamRef.current.write(chunkBytes);
           } else {
-            // Create download blob
-            const blob = new Blob(chunksCollectorRef.current as BlobPart[], {
-              type: 'application/octet-stream',
-            });
-            const url = URL.createObjectURL(blob);
-            setDownloadBlobUrl((prev) => {
-              if (prev) URL.revokeObjectURL(prev);
-              return url;
-            });
-            chunksCollectorRef.current = [];
+            chunksCollectorRef.current.push(chunkBytes);
           }
+        },
+        signal: abortController.signal,
+      });
 
-          setResult(data as WorkerSuccessMessage);
-          if (workerRef.current) {
-            workerRef.current.terminate();
-            workerRef.current = null;
-          }
-        }).catch((err) => {
-          console.error('Stream finalization error:', err);
-          setIsProcessing(false);
-          setError('Failed to finalize output stream.');
+      // Close writable file stream strictly after all writes resolve
+      if (writableStreamRef.current) {
+        await writableStreamRef.current.close();
+        writableStreamRef.current = null;
+      } else {
+        const blob = new Blob(chunksCollectorRef.current as BlobPart[], {
+          type: 'application/octet-stream',
         });
-      } else if (data.type === 'ERROR') {
-        setIsProcessing(false);
-        setProgress(null);
-        setError(data.error || 'Decryption failed. Check all keys.');
+        const url = URL.createObjectURL(blob);
+        setDownloadBlobUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
         chunksCollectorRef.current = [];
-
-        if (writableStreamRef.current) {
-          try {
-            writableStreamRef.current.abort().catch(() => {});
-          } catch {
-            // Ignore stream abort errors
-          }
-          writableStreamRef.current = null;
-        }
-
-        if (workerRef.current) {
-          workerRef.current.terminate();
-          workerRef.current = null;
-        }
       }
-    };
 
-    worker.onerror = (wErr) => {
-      console.error('Worker error:', wErr);
+      setResult(res);
       setIsProcessing(false);
       setProgress(null);
-      setError(action === 'ENCRYPT' ? 'Encryption failed during cascade execution.' : 'Decryption failed. Check all keys.');
-      chunksCollectorRef.current = [];
+    } catch (err: unknown) {
       if (writableStreamRef.current) {
         try {
-          writableStreamRef.current.abort().catch(() => {});
+          await writableStreamRef.current.abort();
         } catch {
-          // Ignore abort error
+          // Ignore stream abort errors
         }
         writableStreamRef.current = null;
       }
-      if (workerRef.current) {
-        workerRef.current.terminate();
-        workerRef.current = null;
+      chunksCollectorRef.current = [];
+      setIsProcessing(false);
+      setProgress(null);
+      if (err instanceof Error && err.message === 'Aborted') {
+        setError('Operation cancelled by user.');
+      } else {
+        const fallbackMsg = action === 'ENCRYPT' ? 'Encryption failed during cascade execution.' : 'Decryption failed. Check all keys.';
+        setError(err instanceof Error && err.message ? err.message : fallbackMsg);
       }
-    };
-
-    // Dispatch job to worker
-    worker.postMessage({
-      action,
-      file: selectedFile,
-      keys: {
-        layer1ThreefishHex: k1,
-        layer2SerpentHex: k2,
-        layer3ChaChaHex: k3,
-        layer4AesHex: k4,
-      },
-    });
+    } finally {
+      abortControllerRef.current = null;
+    }
   };
 
   const handleAbort = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     if (workerRef.current) {
       workerRef.current.terminate();
       workerRef.current = null;

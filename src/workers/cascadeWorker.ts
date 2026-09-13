@@ -22,6 +22,7 @@ import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 const CHUNK_SIZE = 1048576; // 1 MB
+const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE + 32;
 
 const postWorkerMessage = (message: unknown, transfer?: Transferable[]) => {
   (self as unknown as { postMessage: (msg: unknown, transfer?: Transferable[]) => void }).postMessage(
@@ -30,8 +31,107 @@ const postWorkerMessage = (message: unknown, transfer?: Transferable[]) => {
   );
 };
 
+let pooledEngine: WasmCascadeInstance | null = null;
+
 self.onmessage = async (e: MessageEvent) => {
-  const { action, file, keys } = e.data;
+  const data = e.data;
+  const action = data.action;
+
+  // Handlers for worker pool mode
+  if (action === 'INIT_POOL') {
+    try {
+      const keys = data.keys;
+      const k1 = hexToBytes(keys.layer1ThreefishHex, 128);
+      const k2 = hexToBytes(keys.layer2SerpentHex, 32);
+      const k3 = hexToBytes(keys.layer3ChaChaHex, 32);
+      const k4 = hexToBytes(keys.layer4AesHex, 32);
+      pooledEngine = await createCascadeEngine(k1, k2, k3, k4);
+      self.postMessage({ type: 'POOL_READY' });
+    } catch (err: unknown) {
+      self.postMessage({ type: 'ERROR', error: err instanceof Error ? err.message : 'Pool init failed' });
+    }
+    return;
+  }
+
+  if (action === 'ENCRYPT_CHUNK') {
+    try {
+      if (!pooledEngine) throw new Error('Engine not initialized');
+      const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes } = data;
+      const chunkWithTags = new Uint8Array(chunkData);
+      const chunkSlice = chunkWithTags.subarray(0, CHUNK_SIZE);
+      const { ciphertext, tagChaCha, tagAes } = await pooledEngine.encryptChunk(
+        chunkSlice,
+        chunkIndex,
+        new Uint8Array(nonceThreefish),
+        new Uint8Array(nonceSerpent),
+        new Uint8Array(nonceChaCha),
+        new Uint8Array(nonceAes)
+      );
+      if (ciphertext !== chunkSlice) {
+        chunkWithTags.set(ciphertext, 0);
+      }
+      chunkWithTags.set(tagChaCha, CHUNK_SIZE);
+      chunkWithTags.set(tagAes, CHUNK_SIZE + 16);
+      postWorkerMessage(
+        {
+          type: 'CHUNK_DONE',
+          chunkIndex,
+          data: chunkWithTags.buffer,
+        },
+        [chunkWithTags.buffer]
+      );
+    } catch (err: unknown) {
+      self.postMessage({ type: 'ERROR', error: err instanceof Error ? err.message : 'Chunk encryption failed' });
+    }
+    return;
+  }
+
+  if (action === 'DECRYPT_CHUNK') {
+    try {
+      if (!pooledEngine) throw new Error('Engine not initialized');
+      const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes } = data;
+      const chunkWithTags = new Uint8Array(chunkData);
+      if (chunkWithTags.length < ENCRYPTED_CHUNK_SIZE) {
+        throw new Error(GENERIC_DECRYPT_ERROR);
+      }
+      const ciphertext = chunkWithTags.subarray(0, CHUNK_SIZE);
+      const tagChaCha = chunkWithTags.subarray(CHUNK_SIZE, CHUNK_SIZE + 16);
+      const tagAes = chunkWithTags.subarray(CHUNK_SIZE + 16, CHUNK_SIZE + 32);
+      const plain = await pooledEngine.decryptChunk(
+        ciphertext,
+        chunkIndex,
+        new Uint8Array(nonceThreefish),
+        new Uint8Array(nonceSerpent),
+        new Uint8Array(nonceChaCha),
+        new Uint8Array(nonceAes),
+        tagChaCha,
+        tagAes
+      );
+      const outBuffer = (plain.byteLength === plain.buffer.byteLength && plain.byteOffset === 0)
+        ? plain.buffer
+        : plain.slice().buffer;
+      postWorkerMessage(
+        {
+          type: 'CHUNK_DONE',
+          chunkIndex,
+          data: outBuffer,
+        },
+        [outBuffer]
+      );
+    } catch {
+      self.postMessage({ type: 'ERROR', error: GENERIC_DECRYPT_ERROR });
+    }
+    return;
+  }
+
+  if (action === 'DESTROY_POOL') {
+    pooledEngine = null;
+    self.postMessage({ type: 'POOL_DESTROYED' });
+    return;
+  }
+
+  // Monolithic file streaming mode (for single-chunk files or fallback)
+  const { file, keys } = data;
   let k1: Uint8Array | null = null;
   let k2: Uint8Array | null = null;
   let k3: Uint8Array | null = null;
