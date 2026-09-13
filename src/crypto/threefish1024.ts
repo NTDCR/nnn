@@ -21,9 +21,12 @@ const ROTATIONS: readonly (readonly number[])[] = [
 const MIX_DST_P: readonly number[] = [0, 4, 12, 8, 20, 24, 28, 16];
 const MIX_DST_Q: readonly number[] = [18, 26, 22, 30, 14, 6, 10, 2];
 
+import { ThreefishSimdEngine } from './threefishSimdEngine.ts';
+
 export class Threefish1024 {
   // 21 subkeys, each containing 32 32-bit words (16 low/high pairs)
   private subkeys: Uint32Array[];
+  private simdEngine: ThreefishSimdEngine | null = null;
   private vBuf: Uint32Array = new Uint32Array(32);
   private vNextBuf: Uint32Array = new Uint32Array(32);
   private v4Buf: Uint32Array = new Uint32Array(128);
@@ -107,6 +110,8 @@ export class Threefish1024 {
       }
       this.subkeys[s] = sk;
     }
+
+    this.simdEngine = ThreefishSimdEngine.create(keyBytes, tweakBytes);
   }
 
   /**
@@ -387,6 +392,12 @@ export class Threefish1024 {
     if (baseNonce.length < 16) {
       throw new Error('Threefish-1024 base nonce must be at least 16 bytes');
     }
+
+    if (this.simdEngine) {
+      this.simdEngine.processCtr(data, baseNonce, chunkIndex);
+      return;
+    }
+
     const BLOCK_SIZE = 128;
     const FOUR_BLOCKS = 512;
     const blocksInChunk = Math.ceil(data.length / BLOCK_SIZE);
@@ -489,6 +500,10 @@ export class Threefish1024 {
   }
 
   public destroy(): void {
+    if (this.simdEngine) {
+      this.simdEngine.destroy();
+      this.simdEngine = null;
+    }
     for (let s = 0; s < this.subkeys.length; s++) {
       this.subkeys[s].fill(0);
     }

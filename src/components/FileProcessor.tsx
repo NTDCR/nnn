@@ -28,7 +28,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
   const [useDirectDiskWrite, setUseDirectDiskWrite] = useState<boolean>(true);
   const [downloadBlobUrl, setDownloadBlobUrl] = useState<string | null>(null);
   const [streamedDirectToDisk, setStreamedDirectToDisk] = useState<boolean>(false);
-  const [coreMode, setCoreMode] = useState<'auto' | 2 | 4>('auto');
+  const [coreMode, setCoreMode] = useState<'auto' | 2 | 4>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saved = localStorage.getItem('fortknox_core_mode');
+      if (saved === '2') return 2;
+      if (saved === '4') return 4;
+    }
+    return 'auto';
+  });
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const writableStreamRef = useRef<FileSystemWritableFileStream | null>(null);
@@ -278,7 +285,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
             <span className="text-[11px] text-slate-400 font-mono">CPU:</span>
             <select
               value={coreMode}
-              onChange={(e) => setCoreMode(e.target.value === 'auto' ? 'auto' : Number(e.target.value) as 2 | 4)}
+              onChange={(e) => {
+                const nextMode = e.target.value === 'auto' ? 'auto' : (Number(e.target.value) as 2 | 4);
+                setCoreMode(nextMode);
+                if (typeof window !== 'undefined' && window.localStorage) {
+                  localStorage.setItem('fortknox_core_mode', String(nextMode));
+                }
+              }}
               disabled={isProcessing}
               className="bg-transparent text-indigo-300 font-mono text-[11px] outline-none cursor-pointer"
             >

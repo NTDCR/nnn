@@ -68,9 +68,9 @@ async function calibrateWorkerPool(candidateWorkers: Worker[]): Promise<number> 
     const fastest = sorted[0];
     const fourth = sorted[3];
 
-    // If the 4th worker executes within 1.85x of the fastest worker,
+    // If the 4th worker executes within 2.3x of the fastest worker,
     // all 4 cores are true high-throughput Performance Cores (e.g. Dimensity 9300, Snapdragon 8 Elite, Tensor G4, or Desktop)!
-    const isAllPerformanceCores = fourth <= Math.max(1.0, fastest) * 1.85;
+    const isAllPerformanceCores = fourth <= Math.max(1.0, fastest) * 2.3;
 
     cachedCalibratedWorkers = isAllPerformanceCores ? 4 : 2;
   } catch {
@@ -258,13 +258,22 @@ async function executePoolEncryption(params: {
     return slicePrefetchMap.get(chunkIdx)!;
   };
 
-  const emitReadyChunks = async () => {
-    while (completedChunks.has(nextEmitChunk)) {
-      const chunk = completedChunks.get(nextEmitChunk)!;
-      completedChunks.delete(nextEmitChunk);
-      await onChunkOutput(chunk);
-      nextEmitChunk++;
-    }
+  // Asynchronous background writer to decouple storage/disk I/O from worker ALU computation
+  let writerPromise: Promise<void> = Promise.resolve();
+  let writerError: Error | null = null;
+
+  const drainReadyChunks = () => {
+    writerPromise = writerPromise.then(async () => {
+      while (completedChunks.has(nextEmitChunk)) {
+        if (signal?.aborted) throw new Error('Aborted');
+        const chunk = completedChunks.get(nextEmitChunk)!;
+        completedChunks.delete(nextEmitChunk);
+        await onChunkOutput(chunk);
+        nextEmitChunk++;
+      }
+    }).catch((err) => {
+      writerError = err instanceof Error ? err : new Error(String(err));
+    });
   };
 
   // Dispatch chunks across workers
@@ -273,6 +282,7 @@ async function executePoolEncryption(params: {
   const dispatchToWorker = async (worker: Worker) => {
     while (nextDispatchChunk < chunkCount) {
       if (signal?.aborted) throw new Error('Aborted');
+      if (writerError) throw writerError;
       const idx = nextDispatchChunk++;
 
       // Trigger background read-ahead prefetching for upcoming chunks
@@ -319,7 +329,14 @@ async function executePoolEncryption(params: {
       });
 
       completedChunks.set(idx, new Uint8Array(encryptedBuffer));
-      await emitReadyChunks();
+      drainReadyChunks();
+
+      // Backpressure control: prevent excessive memory buildup while maintaining full CPU saturation
+      while (completedChunks.size >= workers.length * 2 && !writerError) {
+        if (signal?.aborted) throw new Error('Aborted');
+        await new Promise((r) => setTimeout(r, 4));
+      }
+      if (writerError) throw writerError;
 
       processedBytes += rawBytes.length;
       const elapsedSec = (performance.now() - startTime) / 1000;
@@ -342,7 +359,9 @@ async function executePoolEncryption(params: {
   };
 
   await Promise.all(workers.map((w) => dispatchToWorker(w)));
-  await emitReadyChunks();
+  drainReadyChunks();
+  await writerPromise;
+  if (writerError) throw writerError;
 
   // Finalize container metadata & tail pointer
   const hmacIntegrity = hmacHasher.digest();
@@ -451,21 +470,30 @@ async function executePoolDecryption(params: {
   let nextEmitChunk = 0;
   const completedChunks = new Map<number, Uint8Array>();
 
-  const emitReadyChunks = async () => {
-    while (completedChunks.has(nextEmitChunk)) {
-      const plainChunk = completedChunks.get(nextEmitChunk)!;
-      completedChunks.delete(nextEmitChunk);
+  // Asynchronous background writer to decouple storage/disk I/O from worker ALU computation
+  let writerPromise: Promise<void> = Promise.resolve();
+  let writerError: Error | null = null;
 
-      const isLast = nextEmitChunk === chunkCount - 1;
-      const validLen = isLast ? originalSize - (chunkCount - 1) * CHUNK_SIZE : CHUNK_SIZE;
-      const finalBytes = plainChunk.subarray(0, validLen);
+  const drainReadyChunks = () => {
+    writerPromise = writerPromise.then(async () => {
+      while (completedChunks.has(nextEmitChunk)) {
+        if (signal?.aborted) throw new Error('Aborted');
+        const plainChunk = completedChunks.get(nextEmitChunk)!;
+        completedChunks.delete(nextEmitChunk);
 
-      hmacHasher.update(finalBytes);
-      await onChunkOutput(finalBytes);
+        const isLast = nextEmitChunk === chunkCount - 1;
+        const validLen = isLast ? originalSize - (chunkCount - 1) * CHUNK_SIZE : CHUNK_SIZE;
+        const finalBytes = plainChunk.subarray(0, validLen);
 
-      processedBytes += finalBytes.length;
-      nextEmitChunk++;
-    }
+        hmacHasher.update(finalBytes);
+        await onChunkOutput(finalBytes);
+
+        processedBytes += finalBytes.length;
+        nextEmitChunk++;
+      }
+    }).catch((err) => {
+      writerError = err instanceof Error ? err : new Error(String(err));
+    });
   };
 
   // Background pipelined chunk prefetcher for encrypted chunks
@@ -484,6 +512,7 @@ async function executePoolDecryption(params: {
   const dispatchToWorker = async (worker: Worker) => {
     while (nextDispatchChunk < chunkCount) {
       if (signal?.aborted) throw new Error('Aborted');
+      if (writerError) throw writerError;
       const idx = nextDispatchChunk++;
 
       // Trigger background read-ahead prefetching for upcoming chunks
@@ -522,7 +551,14 @@ async function executePoolDecryption(params: {
       });
 
       completedChunks.set(idx, new Uint8Array(plainBuffer));
-      await emitReadyChunks();
+      drainReadyChunks();
+
+      // Backpressure control: prevent excessive memory buildup while maintaining full CPU saturation
+      while (completedChunks.size >= workers.length * 2 && !writerError) {
+        if (signal?.aborted) throw new Error('Aborted');
+        await new Promise((r) => setTimeout(r, 4));
+      }
+      if (writerError) throw writerError;
 
       const elapsedSec = (performance.now() - startTime) / 1000;
       const speedMBs = processedBytes / (1024 * 1024) / Math.max(0.01, elapsedSec);
@@ -544,7 +580,9 @@ async function executePoolDecryption(params: {
   };
 
   await Promise.all(workers.map((w) => dispatchToWorker(w)));
-  await emitReadyChunks();
+  drainReadyChunks();
+  await writerPromise;
+  if (writerError) throw writerError;
 
   // Adversarial check: Verify HMAC integrity of entire recovered plaintext
   const computedHmac = hmacHasher.digest();
