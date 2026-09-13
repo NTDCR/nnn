@@ -73,10 +73,10 @@ async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Wor
         })
     );
 
-    // Timeout safety fallback of 400ms
+    // Timeout safety fallback of 1500ms
     const fallback = candidateWorkers.map((w) => ({ worker: w, elapsedMs: 50 }));
     const timeout = new Promise<WorkerProbeResult[]>((resolve) =>
-      setTimeout(() => resolve(fallback), 400)
+      setTimeout(() => resolve(fallback), 1500)
     );
 
     const results = await Promise.race([Promise.all(probePromises), timeout]);
@@ -134,17 +134,26 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     const isMultiChunk = file.size > CHUNK_SIZE;
     const hardwareConcurrency = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
+    const isMobileDevice = typeof navigator !== 'undefined' && (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 2)
+    );
 
     let targetWorkerCount: number;
     if (!isMultiChunk) {
       targetWorkerCount = 1;
     } else if (coreConcurrency === 'webgpu') {
-      targetWorkerCount = Math.min(hardwareConcurrency, 8);
+      targetWorkerCount = isMobileDevice ? 2 : Math.min(hardwareConcurrency, 8);
     } else if (coreConcurrency === 2 || coreConcurrency === 4 || coreConcurrency === 6 || coreConcurrency === 8) {
       targetWorkerCount = coreConcurrency;
     } else {
       // 'auto' mode:
-      if (hardwareConcurrency <= 4) {
+      if (isMobileDevice) {
+        // Mobile heterogeneous SoCs (e.g. Samsung Exynos 1280 on Galaxy M34 5G) feature 2x Cortex-A78 P-cores + 6x Cortex-A55 E-cores.
+        // Assigning exactly 2 workers allows Android EAS to pin them strictly to the 2 Performance cores,
+        // completely eliminating E-core head-of-line stalls and thermal throttling.
+        targetWorkerCount = 2;
+      } else if (hardwareConcurrency <= 4) {
         targetWorkerCount = Math.max(2, hardwareConcurrency);
       } else if (cachedCalibratedWorkers !== null) {
         targetWorkerCount = cachedCalibratedWorkers;
@@ -184,9 +193,9 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     if (signal?.aborted) throw new Error('Aborted');
 
-    // Strict P-Core Enforcement: Only calibrate when in 'auto' mode and system has > 4 threads
+    // Strict P-Core Enforcement: Only calibrate when in 'auto' mode and system has > 4 threads on desktop
     let activeWorkers = workers;
-    if (isMultiChunk && workers.length > 4 && coreConcurrency === 'auto') {
+    if (isMultiChunk && workers.length > 4 && coreConcurrency === 'auto' && !isMobileDevice) {
       activeWorkers = await calibrateAndFilterPCores(workers);
     }
 
