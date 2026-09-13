@@ -260,6 +260,23 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
           return url;
         });
         chunksCollectorRef.current = [];
+
+        // Automatically trigger download fallback for browsers without direct disk write API
+        try {
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = res.fileName;
+          anchor.style.display = 'none';
+          document.body.appendChild(anchor);
+          anchor.click();
+          setTimeout(() => {
+            if (document.body.contains(anchor)) {
+              document.body.removeChild(anchor);
+            }
+          }, 1000);
+        } catch (downloadErr) {
+          console.warn('Auto-download trigger fallback failed:', downloadErr);
+        }
       }
 
       setResult(res);
@@ -343,8 +360,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
             </select>
           </div>
 
-          {/* Disk streaming toggle */}
-          {hasFileSystemAccess && (
+          {/* Disk streaming toggle or Auto-Download Fallback indicator */}
+          {hasFileSystemAccess ? (
             <label
               className="flex items-center gap-2 cursor-pointer text-xs text-slate-300"
               title="Saves directly to disk without RAM accumulation. Uncheck for ultra-fast in-memory streaming matching Firefox speed."
@@ -361,6 +378,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
                 Direct-to-Disk Stream
               </span>
             </label>
+          ) : (
+            <div
+              className="flex items-center gap-1.5 text-xs text-emerald-300/90 font-mono bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-800/50"
+              title="This browser does not support the File System Access API. Chunks are automatically buffered and auto-downloaded on completion."
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>Auto-Download Fallback</span>
+            </div>
           )}
         </div>
       </div>
@@ -457,20 +482,24 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
           </div>
 
           {downloadBlobUrl && (
-            <div className="mt-3 pt-3 border-t border-emerald-900/50 flex justify-end">
+            <div className="mt-3 pt-3 border-t border-emerald-900/50 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[11px] text-emerald-300/90 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                Downloaded automatically. Click below if not prompted:
+              </span>
               <a
                 href={downloadBlobUrl}
                 download={result.fileName}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition"
               >
                 <Download className="w-3.5 h-3.5" />
-                Download Decrypted / Encrypted File
+                Download Again
               </a>
             </div>
           )}
 
           {streamedDirectToDisk && (
-            <p className="text-[11px] text-emerald-300/80 mt-1 flex items-center gap-1">
+            <p className="text-[11px] text-emerald-300/80 mt-2 flex items-center gap-1">
               <Info className="w-3.5 h-3.5 text-emerald-400" />
               File was streamed directly to disk at chosen destination.
             </p>
