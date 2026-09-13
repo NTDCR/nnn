@@ -134,10 +134,11 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     const isMultiChunk = file.size > CHUNK_SIZE;
     const hardwareConcurrency = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
-    const isMobileDevice = typeof navigator !== 'undefined' && (
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-      (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 2)
-    );
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isDesktopOS = /Windows NT|Win64|x86_64|X11.*Linux/i.test(ua);
+    const isExplicitMobile = /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua) ||
+      Boolean((navigator as unknown as { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile);
+    const isMobileDevice = !isDesktopOS && isExplicitMobile;
 
     let targetWorkerCount: number;
     if (!isMultiChunk) {
@@ -172,20 +173,29 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     if (signal?.aborted) throw new Error('Aborted');
 
-    // Initialize each worker with keys
+    // Initialize each worker with keys and safe crash handling
     const initPromises = workers.map(
       (w) =>
         new Promise<void>((resolve, reject) => {
-          const handler = (e: MessageEvent) => {
+          const cleanup = () => {
+            w.removeEventListener('message', msgHandler);
+            w.removeEventListener('error', errHandler);
+          };
+          const msgHandler = (e: MessageEvent) => {
             if (e.data.type === 'POOL_READY') {
-              w.removeEventListener('message', handler);
+              cleanup();
               resolve();
             } else if (e.data.type === 'ERROR') {
-              w.removeEventListener('message', handler);
+              cleanup();
               reject(new Error(e.data.error || 'Worker init failed'));
             }
           };
-          w.addEventListener('message', handler);
+          const errHandler = (e: ErrorEvent) => {
+            cleanup();
+            reject(new Error(e?.message || 'Worker initialization crashed'));
+          };
+          w.addEventListener('message', msgHandler);
+          w.addEventListener('error', errHandler);
           w.postMessage({ action: 'INIT_POOL', keys });
         })
     );
@@ -193,9 +203,9 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     if (signal?.aborted) throw new Error('Aborted');
 
-    // Strict P-Core Enforcement: Only calibrate when in 'auto' mode and system has > 4 threads on desktop
+    // Strict P-Core Enforcement: Calibrate when in 'auto' or 'webgpu' mode and system has > 4 threads on desktop
     let activeWorkers = workers;
-    if (isMultiChunk && workers.length > 4 && coreConcurrency === 'auto' && !isMobileDevice) {
+    if (isMultiChunk && workers.length > 4 && (coreConcurrency === 'auto' || coreConcurrency === 'webgpu') && !isMobileDevice) {
       activeWorkers = await calibrateAndFilterPCores(workers);
     }
 
@@ -376,10 +386,18 @@ async function executePoolEncryption(params: {
         pendingEncMap.clear();
       }
     };
+    w.onerror = (e: ErrorEvent) => {
+      const err = new Error(e?.message || 'Worker thread crashed');
+      for (const p of pendingEncMap.values()) {
+        p.reject(err);
+      }
+      pendingEncMap.clear();
+    };
   });
 
   // Dispatch chunks across workers
   let nextDispatchChunk = 0;
+  let completedChunksCount = 0;
 
   const dispatchToWorker = async (worker: Worker) => {
     while (nextDispatchChunk < chunkCount) {
@@ -424,6 +442,7 @@ async function executePoolEncryption(params: {
 
       completedChunks.set(idx, new Uint8Array(encryptedBuffer));
       drainReadyChunks();
+      completedChunksCount++;
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
       const maxBuffered = Math.max(16, workers.length * 4);
@@ -441,13 +460,13 @@ async function executePoolEncryption(params: {
 
       processedBytes += rawBytes.length;
       const speedMBs = calculateLiveSpeed(rawBytes.length);
-      const remainingChunks = chunkCount - (idx + 1);
+      const remainingChunks = chunkCount - completedChunksCount;
       const etaSeconds = speedMBs > 0 ? (remainingChunks * (CHUNK_SIZE / (1024 * 1024))) / speedMBs : 0;
 
       onProgress?.({
         type: 'PROGRESS',
         phase: 'ENCRYPTING',
-        currentChunk: Math.min(chunkCount, nextEmitChunk),
+        currentChunk: Math.min(chunkCount, completedChunksCount + (completedChunksCount < chunkCount ? 1 : 0)),
         totalChunks: chunkCount,
         currentLayer: 4,
         processedBytes,
@@ -462,6 +481,19 @@ async function executePoolEncryption(params: {
   drainReadyChunks();
   await writerPromise;
   if (writerError) throw writerError;
+
+  // Emit guaranteed 100% final progress so UI smoothly transitions to success
+  onProgress?.({
+    type: 'PROGRESS',
+    phase: 'ENCRYPTING',
+    currentChunk: chunkCount,
+    totalChunks: chunkCount,
+    currentLayer: 4,
+    processedBytes: originalSize,
+    totalBytes: originalSize,
+    speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
+    etaSeconds: 0,
+  });
 
   // Finalize container metadata & tail pointer
   const hmacIntegrity = hmacHasher.digest();
@@ -674,9 +706,17 @@ async function executePoolDecryption(params: {
         pendingDecMap.clear();
       }
     };
+    w.onerror = () => {
+      const err = new Error(GENERIC_DECRYPT_ERROR);
+      for (const p of pendingDecMap.values()) {
+        p.reject(err);
+      }
+      pendingDecMap.clear();
+    };
   });
 
   let nextDispatchChunk = 0;
+  let completedChunksCount = 0;
 
   const dispatchToWorker = async (worker: Worker) => {
     while (nextDispatchChunk < chunkCount) {
@@ -721,6 +761,7 @@ async function executePoolDecryption(params: {
 
       completedChunks.set(idx, finalBytes);
       drainReadyChunks();
+      completedChunksCount++;
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
       const maxBuffered = Math.max(16, workers.length * 4);
@@ -738,13 +779,13 @@ async function executePoolDecryption(params: {
 
       processedBytes += validLen;
       const speedMBs = calculateLiveSpeed(validLen);
-      const remainingChunks = chunkCount - (idx + 1);
+      const remainingChunks = chunkCount - completedChunksCount;
       const etaSeconds = speedMBs > 0 ? (remainingChunks * (CHUNK_SIZE / (1024 * 1024))) / speedMBs : 0;
 
       onProgress?.({
         type: 'PROGRESS',
         phase: 'DECRYPTING',
-        currentChunk: Math.min(chunkCount, nextEmitChunk),
+        currentChunk: Math.min(chunkCount, completedChunksCount + (completedChunksCount < chunkCount ? 1 : 0)),
         totalChunks: chunkCount,
         currentLayer: 1,
         processedBytes,
@@ -759,6 +800,19 @@ async function executePoolDecryption(params: {
   drainReadyChunks();
   await writerPromise;
   if (writerError) throw writerError;
+
+  // Emit guaranteed 100% final progress so UI smoothly transitions to success
+  onProgress?.({
+    type: 'PROGRESS',
+    phase: 'DECRYPTING',
+    currentChunk: chunkCount,
+    totalChunks: chunkCount,
+    currentLayer: 1,
+    processedBytes: originalSize,
+    totalBytes: originalSize,
+    speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
+    etaSeconds: 0,
+  });
 
   // Ensure all HMAC chunks have been processed
   if (nextHmacChunk < chunkCount) {

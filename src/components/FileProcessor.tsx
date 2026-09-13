@@ -247,8 +247,10 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
 
       // Flush remaining buffered writes and close stream
       if (writableStreamRef.current) {
-        await flushDiskBuffer();
-        await writableStreamRef.current.close();
+        if (!abortController.signal.aborted) {
+          await flushDiskBuffer();
+          await writableStreamRef.current.close();
+        }
         writableStreamRef.current = null;
       } else {
         const blob = new Blob(chunksCollectorRef.current as BlobPart[], {
@@ -294,7 +296,12 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
       chunksCollectorRef.current = [];
       setIsProcessing(false);
       setProgress(null);
-      if (err instanceof Error && err.message === 'Aborted') {
+
+      const isUserAborted =
+        abortController.signal.aborted ||
+        (err instanceof Error && (err.message === 'Aborted' || err.name === 'AbortError' || /abort|closed/i.test(err.message)));
+
+      if (isUserAborted) {
         setError('Operation cancelled by user.');
       } else {
         const fallbackMsg = action === 'ENCRYPT' ? 'Encryption failed during cascade execution.' : 'Decryption failed. Check all keys.';
