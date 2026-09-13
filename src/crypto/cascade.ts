@@ -130,6 +130,8 @@ export class CascadePipeline {
   private serpent: Serpent256;
   private chacha: ChaCha20Poly1305;
   private aes: Aes256Gcm;
+  private aadBuf: Uint8Array = new Uint8Array(8);
+  private aadView: DataView;
 
   constructor(
     key1: Uint8Array | string,
@@ -137,6 +139,7 @@ export class CascadePipeline {
     key3: Uint8Array | string,
     key4: Uint8Array | string
   ) {
+    this.aadView = new DataView(this.aadBuf.buffer);
     const k1 = typeof key1 === 'string' ? hexToBytes(key1, 128) : key1;
     const k2 = typeof key2 === 'string' ? hexToBytes(key2, 32) : key2;
     const k3 = typeof key3 === 'string' ? hexToBytes(key3, 32) : key3;
@@ -170,9 +173,10 @@ export class CascadePipeline {
     nonceThreefish: Uint8Array,
     nonceSerpent: Uint8Array,
     nonceChaCha: Uint8Array,
-    nonceAes: Uint8Array
+    nonceAes: Uint8Array,
+    inPlace: boolean = false
   ): Promise<{ ciphertext: Uint8Array; tagChaCha: Uint8Array; tagAes: Uint8Array }> {
-    const work = new Uint8Array(chunkData);
+    const work = inPlace ? chunkData : new Uint8Array(chunkData);
 
     // Layer 1: Threefish-1024 CTR
     this.threefish.processCtr(work, nonceThreefish, chunkIndex);
@@ -182,13 +186,12 @@ export class CascadePipeline {
 
     // Layer 3: ChaCha20-Poly1305 AEAD
     const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
-    const aad = new Uint8Array(8);
-    new DataView(aad.buffer, aad.byteOffset, 8).setBigUint64(0, BigInt(chunkIndex), true);
-    const tagChaCha = this.chacha.encryptInPlace(work, chunkNonceChaCha, aad);
+    this.aadView.setBigUint64(0, BigInt(chunkIndex), true);
+    const tagChaCha = this.chacha.encryptInPlace(work, chunkNonceChaCha, this.aadBuf);
 
     // Layer 4: AES-256-GCM AEAD
     const chunkNonceAes = this.aes.deriveChunkNonce(nonceAes, chunkIndex);
-    const aesResult = await this.aes.encrypt(work, chunkNonceAes, aad);
+    const aesResult = await this.aes.encrypt(work, chunkNonceAes, this.aadBuf);
 
     return {
       ciphertext: aesResult.ciphertext,
@@ -211,25 +214,23 @@ export class CascadePipeline {
     tagAes: Uint8Array
   ): Promise<Uint8Array> {
     try {
-      const aad = new Uint8Array(8);
-      new DataView(aad.buffer, aad.byteOffset, 8).setBigUint64(0, BigInt(chunkIndex), true);
+      this.aadView.setBigUint64(0, BigInt(chunkIndex), true);
 
       // Layer 4: AES-256-GCM AEAD (reverse 1)
       const chunkNonceAes = this.aes.deriveChunkNonce(nonceAes, chunkIndex);
-      const afterAes = await this.aes.decrypt(ciphertext, chunkNonceAes, tagAes, aad);
+      const afterAes = await this.aes.decrypt(ciphertext, chunkNonceAes, tagAes, this.aadBuf);
 
-      // Layer 3: ChaCha20-Poly1305 AEAD (reverse 2)
-      const work = new Uint8Array(afterAes);
+      // Layer 3: ChaCha20-Poly1305 AEAD (reverse 2) - decrypt in place directly in afterAes buffer
       const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
-      this.chacha.decryptInPlace(work, chunkNonceChaCha, tagChaCha, aad);
+      this.chacha.decryptInPlace(afterAes, chunkNonceChaCha, tagChaCha, this.aadBuf);
 
       // Layer 2: Serpent-256 CTR (reverse 3)
-      this.serpent.processCtr(work, nonceSerpent, chunkIndex);
+      this.serpent.processCtr(afterAes, nonceSerpent, chunkIndex);
 
       // Layer 1: Threefish-1024 CTR (reverse 4)
-      this.threefish.processCtr(work, nonceThreefish, chunkIndex);
+      this.threefish.processCtr(afterAes, nonceThreefish, chunkIndex);
 
-      return work;
+      return afterAes;
     } catch {
       throw new Error(GENERIC_DECRYPT_ERROR);
     }
@@ -240,5 +241,6 @@ export class CascadePipeline {
     this.serpent.destroy();
     this.chacha.destroy();
     this.aes.destroy();
+    this.aadBuf.fill(0);
   }
 }

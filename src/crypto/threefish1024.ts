@@ -86,10 +86,19 @@ export class Threefish1024 {
    * Utilizes 8 parallel SIMD ARX MIX lanes.
    */
   public encryptBlock(block: Uint8Array): void {
-    const view = new DataView(block.buffer, block.byteOffset, 128);
+    const isInternal = block === this.blockBuffer;
+    const view = isInternal ? this.blockView : new DataView(block.buffer, block.byteOffset, 128);
 
-    for (let i = 0; i < 16; i++) {
-      this.vBuf[i] = view.getBigUint64(i * 8, true);
+    const v = this.vBuf;
+    if (isInternal) {
+      const bU64 = this.blockU64;
+      for (let i = 0; i < 16; i++) {
+        v[i] = bU64[i];
+      }
+    } else {
+      for (let i = 0; i < 16; i++) {
+        v[i] = view.getBigUint64(i * 8, true);
+      }
     }
 
     let cur = this.vBuf;
@@ -127,9 +136,16 @@ export class Threefish1024 {
 
     // Since 80 rounds is even, cur is guaranteed to be this.vBuf
     const lastSk = this.subkeys[20];
-    for (let i = 0; i < 16; i++) {
-      const finalVal = (cur[i] + lastSk[i]) & 0xFFFFFFFFFFFFFFFFn;
-      view.setBigUint64(i * 8, finalVal, true);
+    if (isInternal) {
+      const bU64 = this.blockU64;
+      for (let i = 0; i < 16; i++) {
+        bU64[i] = (cur[i] + lastSk[i]) & 0xFFFFFFFFFFFFFFFFn;
+      }
+    } else {
+      for (let i = 0; i < 16; i++) {
+        const finalVal = (cur[i] + lastSk[i]) & 0xFFFFFFFFFFFFFFFFn;
+        view.setBigUint64(i * 8, finalVal, true);
+      }
     }
   }
 
@@ -150,9 +166,12 @@ export class Threefish1024 {
     const blockU64 = this.blockU64;
     const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
+    // Pre-slice 16-byte nonce once outside the 8,192-iteration block loop
+    const nonce16 = baseNonce.subarray(0, 16);
+
     for (let offset = 0; offset < data.length; offset += BLOCK_SIZE) {
       blockBuffer.fill(0);
-      blockBuffer.set(baseNonce.subarray(0, 16), 0);
+      blockBuffer.set(nonce16, 0);
       blockView.setBigUint64(16, counter & 0xFFFFFFFFFFFFFFFFn, true);
       blockView.setBigUint64(24, (counter >> 64n) & 0xFFFFFFFFFFFFFFFFn, true);
 

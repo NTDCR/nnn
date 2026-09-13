@@ -133,7 +133,7 @@ export async function createCascadeEngine(
     isSimdAccelerated: true,
     engineType: 'SIMD-Accelerated 1024-bit Cascade',
     async encryptChunk(chunk, index, n1, n2, n3, n4) {
-      return pipeline.encryptChunk(chunk, index, n1, n2, n3, n4);
+      return pipeline.encryptChunk(chunk, index, n1, n2, n3, n4, true);
     },
     async decryptChunk(chunk, index, n1, n2, n3, n4, tChaCha, tAes) {
       return pipeline.decryptChunk(chunk, index, n1, n2, n3, n4, tChaCha, tAes);

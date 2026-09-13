@@ -157,20 +157,22 @@ export class Serpent256 {
   }
 
   public encryptBlock(block: Uint8Array): void {
-    const view = new DataView(block.buffer, block.byteOffset, 16);
+    const view = block === this.blockBuffer ? this.blockView : new DataView(block.buffer, block.byteOffset, 16);
     let x0 = view.getUint32(0, true);
     let x1 = view.getUint32(4, true);
     let x2 = view.getUint32(8, true);
     let x3 = view.getUint32(12, true);
 
     const sOut = this.sboxOut;
+    const subkeys = this.subkeys;
 
     for (let r = 0; r < 32; r++) {
       // Key mixing
-      x0 ^= this.subkeys[r * 4];
-      x1 ^= this.subkeys[r * 4 + 1];
-      x2 ^= this.subkeys[r * 4 + 2];
-      x3 ^= this.subkeys[r * 4 + 3];
+      const skOffset = r * 4;
+      x0 ^= subkeys[skOffset];
+      x1 ^= subkeys[skOffset + 1];
+      x2 ^= subkeys[skOffset + 2];
+      x3 ^= subkeys[skOffset + 3];
 
       // S-Box application in 32-lane bit-slice SIMD form
       applySboxBitsliceSIMD(r % 8, x0, x1, x2, x3, sOut);
@@ -195,10 +197,10 @@ export class Serpent256 {
     }
 
     // Final key mixing (subkey 32)
-    x0 ^= this.subkeys[32 * 4];
-    x1 ^= this.subkeys[32 * 4 + 1];
-    x2 ^= this.subkeys[32 * 4 + 2];
-    x3 ^= this.subkeys[32 * 4 + 3];
+    x0 ^= subkeys[128];
+    x1 ^= subkeys[129];
+    x2 ^= subkeys[130];
+    x3 ^= subkeys[131];
 
     view.setUint32(0, x0 >>> 0, true);
     view.setUint32(4, x1 >>> 0, true);
@@ -218,8 +220,11 @@ export class Serpent256 {
     const blockView = this.blockView;
     const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
+    // Pre-slice 8-byte nonce once outside the 65,536-iteration block loop
+    const nonce8 = baseNonce.subarray(0, 8);
+
     for (let offset = 0; offset < data.length; offset += BLOCK_SIZE) {
-      blockBuffer.set(baseNonce.subarray(0, 8), 0);
+      blockBuffer.set(nonce8, 0);
       blockView.setBigUint64(8, counter, true);
 
       this.encryptBlock(blockBuffer);

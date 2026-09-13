@@ -108,30 +108,41 @@ async function processEncryption(
     totalBytes: chunkCount * CHUNK_SIZE + METADATA_SIZE + POINTER_BLOCK_SIZE,
   });
 
+  // Asynchronous read-ahead pipelining: pre-read next chunk while CPU processes current chunk
+  const fetchChunk = (idx: number): Promise<ArrayBuffer> => {
+    const start = idx * CHUNK_SIZE;
+    const end = Math.min(originalSize, start + CHUNK_SIZE);
+    return file.slice(start, end).arrayBuffer();
+  };
+
+  let nextChunkPromise = chunkCount > 0 ? fetchChunk(0) : null;
+
   // Stream each 1 MB chunk
   for (let i = 0; i < chunkCount; i++) {
-    const startByte = i * CHUNK_SIZE;
-    const endByte = Math.min(originalSize, startByte + CHUNK_SIZE);
-    const blobSlice = file.slice(startByte, endByte);
-    const arrayBuffer = await blobSlice.arrayBuffer();
+    const rawBuffer = await nextChunkPromise!;
+    // Pre-fetch chunk i + 1 asynchronously while CPU processes chunk i
+    if (i + 1 < chunkCount) {
+      nextChunkPromise = fetchChunk(i + 1);
+    }
+    const rawBytes = new Uint8Array(rawBuffer);
 
-    // Plaintext integrity update (accumulates unpadded bytes)
-    hmacHasher.update(new Uint8Array(arrayBuffer));
+    // Plaintext integrity update (accumulates unpadded bytes directly with zero copy)
+    hmacHasher.update(rawBytes);
 
-    let chunk = new Uint8Array(CHUNK_SIZE);
-    chunk.set(new Uint8Array(arrayBuffer), 0);
+    // Single pre-allocated container buffer for ciphertext + 32-byte auth tags
+    const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE + 32;
+    const chunkWithTags = new Uint8Array(ENCRYPTED_CHUNK_SIZE);
+    chunkWithTags.set(rawBytes, 0);
 
-    // If final chunk is smaller than 1 MB, pad with cryptographic random bytes
-    if (arrayBuffer.byteLength < CHUNK_SIZE) {
-      const padLen = CHUNK_SIZE - arrayBuffer.byteLength;
-      const pad = new Uint8Array(padLen);
-      fillRandomBytes(pad);
-      chunk.set(pad, arrayBuffer.byteLength);
+    // If final chunk is smaller than 1 MB, pad with cryptographic random bytes directly in place
+    if (rawBytes.length < CHUNK_SIZE) {
+      fillRandomBytes(chunkWithTags.subarray(rawBytes.length, CHUNK_SIZE));
     }
 
-    // Cascade encrypt
+    // In-place cascade encryption
+    const chunkSlice = chunkWithTags.subarray(0, CHUNK_SIZE);
     const { ciphertext, tagChaCha, tagAes } = await pipeline.encryptChunk(
-      chunk,
+      chunkSlice,
       i,
       nonceThreefish,
       nonceSerpent,
@@ -139,10 +150,9 @@ async function processEncryption(
       nonceAes
     );
 
-    // Store ciphertext along with its authentication tags (1 MB + 16B + 16B = 1,048,608 bytes)
-    const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE + 32;
-    const chunkWithTags = new Uint8Array(ENCRYPTED_CHUNK_SIZE);
-    chunkWithTags.set(ciphertext, 0);
+    if (ciphertext !== chunkSlice) {
+      chunkWithTags.set(ciphertext, 0);
+    }
     chunkWithTags.set(tagChaCha, CHUNK_SIZE);
     chunkWithTags.set(tagAes, CHUNK_SIZE + 16);
 
@@ -321,12 +331,21 @@ async function processDecryption(
     totalBytes: originalSize,
   });
 
+  // Asynchronous read-ahead pipelining for encrypted chunk streaming
+  const fetchEncryptedChunk = (idx: number): Promise<ArrayBuffer> => {
+    const startByte = idx * ENCRYPTED_CHUNK_SIZE;
+    const endByte = startByte + ENCRYPTED_CHUNK_SIZE;
+    return file.slice(startByte, endByte).arrayBuffer();
+  };
+
+  let nextDecryptPromise = chunkCount > 0 ? fetchEncryptedChunk(0) : null;
+
   // Stream each chunk and decrypt
   for (let i = 0; i < chunkCount; i++) {
-    const startByte = i * ENCRYPTED_CHUNK_SIZE;
-    const endByte = startByte + ENCRYPTED_CHUNK_SIZE;
-    const blobSlice = file.slice(startByte, endByte);
-    const arrayBuffer = await blobSlice.arrayBuffer();
+    const arrayBuffer = await nextDecryptPromise!;
+    if (i + 1 < chunkCount) {
+      nextDecryptPromise = fetchEncryptedChunk(i + 1);
+    }
     const chunkWithTags = new Uint8Array(arrayBuffer);
 
     if (chunkWithTags.length < ENCRYPTED_CHUNK_SIZE) {
