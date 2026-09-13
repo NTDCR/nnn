@@ -135,7 +135,7 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
     const isMultiChunk = file.size > CHUNK_SIZE;
     const hardwareConcurrency = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-    const isDesktopOS = /Windows NT|Win64|x86_64|X11.*Linux/i.test(ua);
+    const isDesktopOS = /Windows NT|Win64|x86_64|X11.*Linux|Macintosh|Mac OS X/i.test(ua);
     const isExplicitMobile = /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua) ||
       Boolean((navigator as unknown as { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile);
     const isMobileDevice = !isDesktopOS && isExplicitMobile;
@@ -203,9 +203,9 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     if (signal?.aborted) throw new Error('Aborted');
 
-    // Strict P-Core Enforcement: Calibrate when in 'auto' or 'webgpu' mode and system has > 4 threads on desktop
+    // Strict P-Core Enforcement: Calibrate strictly once when in 'auto' or 'webgpu' mode and system has > 4 threads on desktop
     let activeWorkers = workers;
-    if (isMultiChunk && workers.length > 4 && (coreConcurrency === 'auto' || coreConcurrency === 'webgpu') && !isMobileDevice) {
+    if (isMultiChunk && workers.length > 4 && (coreConcurrency === 'auto' || coreConcurrency === 'webgpu') && !isMobileDevice && cachedCalibratedWorkers === null) {
       activeWorkers = await calibrateAndFilterPCores(workers);
     }
 
@@ -534,7 +534,7 @@ async function executePoolEncryption(params: {
   return {
     type: 'SUCCESS',
     mode: 'ENCRYPT',
-    fileName: file.name,
+    fileName: `${file.name}.fortknox`,
     originalSize,
     finalSize: totalBytes,
     totalTimeMs: Math.round(totalTimeMs),

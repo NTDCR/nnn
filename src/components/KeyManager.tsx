@@ -100,11 +100,40 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     });
   };
 
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fall through to textarea execCommand fallback
+      }
+    }
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '-9999px';
+      textarea.setAttribute('readonly', '');
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return successful;
+    } catch {
+      return false;
+    }
+  };
+
   const handleCopy = async (val: string, index: number) => {
     if (!val) return;
-    await navigator.clipboard.writeText(val);
-    setCopiedIndex(index);
-    setTimeout(() => setCopiedIndex(null), 2000);
+    const ok = await copyToClipboard(val);
+    if (ok) {
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 2000);
+    }
   };
 
   const handleCopyAll = async () => {
@@ -123,9 +152,11 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
       null,
       2
     );
-    await navigator.clipboard.writeText(backupText);
-    setCopyAllStatus(true);
-    setTimeout(() => setCopyAllStatus(false), 2500);
+    const ok = await copyToClipboard(backupText);
+    if (ok) {
+      setCopyAllStatus(true);
+      setTimeout(() => setCopyAllStatus(false), 2500);
+    }
   };
 
   const handleExportJson = () => {
