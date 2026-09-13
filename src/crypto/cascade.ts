@@ -9,6 +9,7 @@ import { Threefish1024 } from './threefish1024.ts';
 import { Serpent256 } from './serpent256.ts';
 import { ChaCha20Poly1305 } from './chacha20poly1305.ts';
 import { Aes256Gcm } from './aes256gcm.ts';
+import { UnifiedCascadeEngine } from './unifiedCascadeEngine.ts';
 
 export const GENERIC_DECRYPT_ERROR = 'Decryption failed. Check all keys.';
 
@@ -123,6 +124,7 @@ export class CascadePipeline {
   private serpent: Serpent256;
   private chacha: ChaCha20Poly1305;
   private aes: Aes256Gcm;
+  private unifiedEngine: UnifiedCascadeEngine | null = null;
   private aadBuf: Uint8Array = new Uint8Array(8);
   private aadView: DataView;
 
@@ -154,6 +156,8 @@ export class CascadePipeline {
     this.serpent = new Serpent256(k2);
     this.chacha = new ChaCha20Poly1305(k3);
     this.aes = new Aes256Gcm(k4);
+
+    this.unifiedEngine = UnifiedCascadeEngine.create(k1, tweak, k2, k3);
   }
 
   /**
@@ -170,17 +174,30 @@ export class CascadePipeline {
     inPlace: boolean = true
   ): Promise<{ ciphertext: Uint8Array; tagChaCha: Uint8Array; tagAes: Uint8Array }> {
     const work = inPlace ? chunkData : new Uint8Array(chunkData);
-
-    // Layer 1: Threefish-1024 CTR
-    this.threefish.processCtr(work, nonceThreefish, chunkIndex);
-
-    // Layer 2: Serpent-256 CTR
-    this.serpent.processCtr(work, nonceSerpent, chunkIndex);
-
-    // Layer 3: ChaCha20-Poly1305 AEAD
-    const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
     this.aadView.setBigUint64(0, BigInt(chunkIndex), true);
-    const tagChaCha = this.chacha.encryptInPlace(work, chunkNonceChaCha, this.aadBuf);
+
+    let tagChaCha: Uint8Array;
+    if (this.unifiedEngine) {
+      const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
+      tagChaCha = this.unifiedEngine.encryptCascadeLayers123(
+        work,
+        nonceThreefish,
+        nonceSerpent,
+        chunkNonceChaCha,
+        chunkIndex,
+        this.aadBuf
+      );
+    } else {
+      // Layer 1: Threefish-1024 CTR
+      this.threefish.processCtr(work, nonceThreefish, chunkIndex);
+
+      // Layer 2: Serpent-256 CTR
+      this.serpent.processCtr(work, nonceSerpent, chunkIndex);
+
+      // Layer 3: ChaCha20-Poly1305 AEAD
+      const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
+      tagChaCha = this.chacha.encryptInPlace(work, chunkNonceChaCha, this.aadBuf);
+    }
 
     // Layer 4: AES-256-GCM AEAD
     const chunkNonceAes = this.aes.deriveChunkNonce(nonceAes, chunkIndex);
@@ -213,15 +230,28 @@ export class CascadePipeline {
       const chunkNonceAes = this.aes.deriveChunkNonce(nonceAes, chunkIndex);
       const afterAes = await this.aes.decrypt(ciphertext, chunkNonceAes, tagAes, this.aadBuf);
 
-      // Layer 3: ChaCha20-Poly1305 AEAD (reverse 2) - decrypt in place directly in afterAes buffer
-      const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
-      this.chacha.decryptInPlace(afterAes, chunkNonceChaCha, tagChaCha, this.aadBuf);
+      if (this.unifiedEngine) {
+        const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
+        this.unifiedEngine.decryptCascadeLayers123(
+          afterAes,
+          nonceThreefish,
+          nonceSerpent,
+          chunkNonceChaCha,
+          chunkIndex,
+          tagChaCha,
+          this.aadBuf
+        );
+      } else {
+        // Layer 3: ChaCha20-Poly1305 AEAD (reverse 2) - decrypt in place directly in afterAes buffer
+        const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
+        this.chacha.decryptInPlace(afterAes, chunkNonceChaCha, tagChaCha, this.aadBuf);
 
-      // Layer 2: Serpent-256 CTR (reverse 3)
-      this.serpent.processCtr(afterAes, nonceSerpent, chunkIndex);
+        // Layer 2: Serpent-256 CTR (reverse 3)
+        this.serpent.processCtr(afterAes, nonceSerpent, chunkIndex);
 
-      // Layer 1: Threefish-1024 CTR (reverse 4)
-      this.threefish.processCtr(afterAes, nonceThreefish, chunkIndex);
+        // Layer 1: Threefish-1024 CTR (reverse 4)
+        this.threefish.processCtr(afterAes, nonceThreefish, chunkIndex);
+      }
 
       return afterAes;
     } catch {
@@ -230,6 +260,10 @@ export class CascadePipeline {
   }
 
   public destroy(): void {
+    if (this.unifiedEngine) {
+      this.unifiedEngine.destroy();
+      this.unifiedEngine = null;
+    }
     this.threefish.destroy();
     this.serpent.destroy();
     this.chacha.destroy();
