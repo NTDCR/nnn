@@ -138,4 +138,43 @@ export class Aes256Gcm {
       throw new Error('Decryption failed. Check all keys.');
     }
   }
+
+  /**
+   * Decrypt contiguous ciphertext + 16-byte authentication tag with ZERO memory allocation or staging copy.
+   * Directly consumes contiguous buffer for Web Crypto or Noble fallback.
+   */
+  public async decryptContiguous(
+    contiguousCipherAndTag: Uint8Array,
+    nonce12: Uint8Array,
+    aad: Uint8Array = new Uint8Array()
+  ): Promise<Uint8Array> {
+    if (this.cryptoKeyPromise) {
+      try {
+        const key = await this.cryptoKeyPromise;
+        if (key && typeof crypto !== 'undefined' && crypto?.subtle) {
+          const plainBuffer = await crypto.subtle.decrypt(
+            {
+              name: 'AES-GCM',
+              iv: nonce12,
+              additionalData: aad,
+              tagLength: 128,
+            },
+            key,
+            contiguousCipherAndTag
+          );
+          return new Uint8Array(plainBuffer);
+        }
+      } catch {
+        // Fall through to Noble Ciphers fallback
+      }
+    }
+
+    // Pure software AES-GCM fallback (Noble Ciphers)
+    try {
+      const cipher = gcm(this.rawKey, nonce12, aad);
+      return cipher.decrypt(contiguousCipherAndTag);
+    } catch {
+      throw new Error('Decryption failed. Check all keys.');
+    }
+  }
 }

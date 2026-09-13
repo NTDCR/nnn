@@ -38,6 +38,15 @@ export interface WasmCascadeInstance {
     tagChaCha: Uint8Array,
     tagAes: Uint8Array
   ): Promise<Uint8Array>;
+  decryptChunkContiguous?(
+    contiguousCipherAndTag: Uint8Array,
+    index: number,
+    n1: Uint8Array,
+    n2: Uint8Array,
+    n3: Uint8Array,
+    n4: Uint8Array,
+    tagChaCha: Uint8Array
+  ): Promise<Uint8Array>;
 }
 
 let wasmInitPromise: Promise<boolean> | null = null;
@@ -137,6 +146,9 @@ export async function createCascadeEngine(
     },
     async decryptChunk(chunk, index, n1, n2, n3, n4, tChaCha, tAes) {
       return pipeline.decryptChunk(chunk, index, n1, n2, n3, n4, tChaCha, tAes);
+    },
+    async decryptChunkContiguous(contiguousCipherAndTag, index, n1, n2, n3, n4, tChaCha) {
+      return pipeline.decryptChunkContiguous(contiguousCipherAndTag, index, n1, n2, n3, n4, tChaCha);
     },
   };
 }

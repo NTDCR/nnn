@@ -146,19 +146,43 @@ self.onmessage = async (e: MessageEvent) => {
       if (chunkWithTags.length < ENCRYPTED_CHUNK_SIZE) {
         throw new Error(GENERIC_DECRYPT_ERROR);
       }
-      const ciphertext = chunkWithTags.subarray(0, CHUNK_SIZE);
-      const tagChaCha = chunkWithTags.subarray(CHUNK_SIZE, CHUNK_SIZE + 16);
-      const tagAes = chunkWithTags.subarray(CHUNK_SIZE + 16, CHUNK_SIZE + 32);
-      const plain = await pooledEngine.decryptChunk(
-        ciphertext,
-        chunkIndex,
-        new Uint8Array(nonceThreefish),
-        new Uint8Array(nonceSerpent),
-        new Uint8Array(nonceChaCha),
-        new Uint8Array(nonceAes),
-        tagChaCha,
-        tagAes
-      );
+      let plain: Uint8Array;
+      if (typeof pooledEngine.decryptChunkContiguous === 'function') {
+        // Zero-copy in-place contiguous tag arrangement:
+        // 1. Save 16-byte tagChaCha to stack array (only 16 bytes copied)
+        const tagChaCha = new Uint8Array(16);
+        tagChaCha.set(chunkWithTags.subarray(CHUNK_SIZE, CHUNK_SIZE + 16));
+
+        // 2. Move 16-byte tagAes directly contiguous with ciphertext in-place (16 bytes copy)
+        chunkWithTags.copyWithin(CHUNK_SIZE, CHUNK_SIZE + 16, CHUNK_SIZE + 32);
+
+        // 3. Contiguous slice (1048576 + 16 bytes) with ZERO 1MB memory staging copy
+        const contiguousCipherAndTag = chunkWithTags.subarray(0, CHUNK_SIZE + 16);
+
+        plain = await pooledEngine.decryptChunkContiguous(
+          contiguousCipherAndTag,
+          chunkIndex,
+          new Uint8Array(nonceThreefish),
+          new Uint8Array(nonceSerpent),
+          new Uint8Array(nonceChaCha),
+          new Uint8Array(nonceAes),
+          tagChaCha
+        );
+      } else {
+        const ciphertext = chunkWithTags.subarray(0, CHUNK_SIZE);
+        const tagChaCha = chunkWithTags.subarray(CHUNK_SIZE, CHUNK_SIZE + 16);
+        const tagAes = chunkWithTags.subarray(CHUNK_SIZE + 16, CHUNK_SIZE + 32);
+        plain = await pooledEngine.decryptChunk(
+          ciphertext,
+          chunkIndex,
+          new Uint8Array(nonceThreefish),
+          new Uint8Array(nonceSerpent),
+          new Uint8Array(nonceChaCha),
+          new Uint8Array(nonceAes),
+          tagChaCha,
+          tagAes
+        );
+      }
       const outBuffer = (plain.byteLength === plain.buffer.byteLength && plain.byteOffset === 0)
         ? plain.buffer
         : plain.slice().buffer;

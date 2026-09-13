@@ -259,6 +259,54 @@ export class CascadePipeline {
     }
   }
 
+  /**
+   * Decrypt 1 MB chunk using contiguous ciphertext + AES tag with zero intermediate memory copying
+   */
+  public async decryptChunkContiguous(
+    contiguousCipherAndTag: Uint8Array,
+    chunkIndex: number,
+    nonceThreefish: Uint8Array,
+    nonceSerpent: Uint8Array,
+    nonceChaCha: Uint8Array,
+    nonceAes: Uint8Array,
+    tagChaCha: Uint8Array
+  ): Promise<Uint8Array> {
+    try {
+      this.aadView.setBigUint64(0, BigInt(chunkIndex), true);
+
+      // Layer 4: AES-256-GCM AEAD (reverse 1) with zero staging copy
+      const chunkNonceAes = this.aes.deriveChunkNonce(nonceAes, chunkIndex);
+      const afterAes = await this.aes.decryptContiguous(contiguousCipherAndTag, chunkNonceAes, this.aadBuf);
+
+      if (this.unifiedEngine) {
+        const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
+        this.unifiedEngine.decryptCascadeLayers123(
+          afterAes,
+          nonceThreefish,
+          nonceSerpent,
+          chunkNonceChaCha,
+          chunkIndex,
+          tagChaCha,
+          this.aadBuf
+        );
+      } else {
+        // Layer 3: ChaCha20-Poly1305 AEAD (reverse 2) - decrypt in place directly in afterAes buffer
+        const chunkNonceChaCha = this.chacha.deriveChunkNonce(nonceChaCha, chunkIndex);
+        this.chacha.decryptInPlace(afterAes, chunkNonceChaCha, tagChaCha, this.aadBuf);
+
+        // Layer 2: Serpent-256 CTR (reverse 3)
+        this.serpent.processCtr(afterAes, nonceSerpent, chunkIndex);
+
+        // Layer 1: Threefish-1024 CTR (reverse 4)
+        this.threefish.processCtr(afterAes, nonceThreefish, chunkIndex);
+      }
+
+      return afterAes;
+    } catch {
+      throw new Error(GENERIC_DECRYPT_ERROR);
+    }
+  }
+
   public destroy(): void {
     if (this.unifiedEngine) {
       this.unifiedEngine.destroy();
