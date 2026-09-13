@@ -39,14 +39,17 @@ export class Aes256Gcm {
     return nonce;
   }
 
+  private decryptBuffer: Uint8Array = new Uint8Array(1048576 + 16);
+
   public destroy(): void {
     this.rawKey.fill(0);
+    this.decryptBuffer.fill(0);
     this.cryptoKeyPromise = null;
   }
 
   /**
    * Encrypt data using Web Crypto AES-GCM or Noble fallback
-   * Returns ciphertext and 16-byte tag
+   * Returns ciphertext and 16-byte tag with zero-copy subarray views
    */
   public async encrypt(
     data: Uint8Array,
@@ -70,8 +73,8 @@ export class Aes256Gcm {
           const result = new Uint8Array(cipherBuffer);
           const splitPoint = result.length - 16;
           return {
-            ciphertext: new Uint8Array(result.subarray(0, splitPoint)),
-            tag: new Uint8Array(result.subarray(splitPoint)),
+            ciphertext: result.subarray(0, splitPoint),
+            tag: result.subarray(splitPoint),
           };
         }
       } catch {
@@ -84,14 +87,14 @@ export class Aes256Gcm {
     const ctWithTag = cipher.encrypt(data);
     const splitPoint = ctWithTag.length - 16;
     return {
-      ciphertext: new Uint8Array(ctWithTag.subarray(0, splitPoint)),
-      tag: new Uint8Array(ctWithTag.subarray(splitPoint)),
+      ciphertext: ctWithTag.subarray(0, splitPoint),
+      tag: ctWithTag.subarray(splitPoint),
     };
   }
 
   /**
    * Decrypt data using Web Crypto AES-GCM or Noble fallback
-   * Verifies tag in constant time
+   * Verifies tag in constant time with zero-copy reusable assembly buffer
    */
   public async decrypt(
     ciphertext: Uint8Array,
@@ -99,7 +102,10 @@ export class Aes256Gcm {
     tag16: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<Uint8Array> {
-    const fullCipher = new Uint8Array(ciphertext.length + 16);
+    const requiredLen = ciphertext.length + 16;
+    const fullCipher = this.decryptBuffer.length >= requiredLen
+      ? this.decryptBuffer.subarray(0, requiredLen)
+      : new Uint8Array(requiredLen);
     fullCipher.set(ciphertext, 0);
     fullCipher.set(tag16, ciphertext.length);
 

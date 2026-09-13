@@ -174,7 +174,7 @@ export class CascadePipeline {
     nonceSerpent: Uint8Array,
     nonceChaCha: Uint8Array,
     nonceAes: Uint8Array,
-    inPlace: boolean = false
+    inPlace: boolean = true
   ): Promise<{ ciphertext: Uint8Array; tagChaCha: Uint8Array; tagAes: Uint8Array }> {
     const work = inPlace ? chunkData : new Uint8Array(chunkData);
 

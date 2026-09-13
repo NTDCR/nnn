@@ -29,8 +29,11 @@ export class ChaCha20Poly1305 {
     return nonce;
   }
 
+  private decryptBuffer: Uint8Array = new Uint8Array(1048576 + 16);
+
   public destroy(): void {
     this.rawKey.fill(0);
+    this.decryptBuffer.fill(0);
   }
 
   /**
@@ -40,10 +43,9 @@ export class ChaCha20Poly1305 {
   public encryptInPlace(data: Uint8Array, nonce12: Uint8Array, aad: Uint8Array = new Uint8Array()): Uint8Array {
     const cipher = chacha20poly1305(this.rawKey, nonce12, aad);
     const fullCiphertext = cipher.encrypt(data);
-    const ciphertextOnly = fullCiphertext.subarray(0, fullCiphertext.length - 16);
-    const tag = fullCiphertext.subarray(fullCiphertext.length - 16);
-    data.set(ciphertextOnly);
-    return new Uint8Array(tag);
+    const splitPoint = fullCiphertext.length - 16;
+    data.set(fullCiphertext.subarray(0, splitPoint));
+    return new Uint8Array(fullCiphertext.subarray(splitPoint));
   }
 
   /**
@@ -52,7 +54,10 @@ export class ChaCha20Poly1305 {
    */
   public decryptInPlace(data: Uint8Array, nonce12: Uint8Array, tag16: Uint8Array, aad: Uint8Array = new Uint8Array()): void {
     const cipher = chacha20poly1305(this.rawKey, nonce12, aad);
-    const fullCiphertext = new Uint8Array(data.length + 16);
+    const requiredLen = data.length + 16;
+    const fullCiphertext = this.decryptBuffer.length >= requiredLen
+      ? this.decryptBuffer.subarray(0, requiredLen)
+      : new Uint8Array(requiredLen);
     fullCiphertext.set(data, 0);
     fullCiphertext.set(tag16, data.length);
     try {
