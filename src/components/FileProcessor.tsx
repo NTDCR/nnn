@@ -156,21 +156,6 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
     }
     if (!validateKeys()) return;
 
-    // Safety guard for browsers without direct-to-disk File System Access API
-    if (!hasFileSystemAccess || !useDirectDiskWrite) {
-      const isMobileBrowser = typeof navigator !== 'undefined' && (
-        /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent) ||
-        Boolean((navigator as unknown as { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile)
-      );
-      const maxSafeBytes = isMobileBrowser ? 800 * 1024 * 1024 : 1500 * 1024 * 1024;
-      if (selectedFile.size > maxSafeBytes) {
-        setError(
-          `Memory limit notice: In-memory fallback cannot safely buffer files larger than ${(maxSafeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB without risk of browser tab crash. Please enable "Direct-to-Disk Stream" on a desktop Chromium browser (Chrome/Edge) for large files.`
-        );
-        return;
-      }
-    }
-
     const k1 = sanitizeHexKey(keys.layer1ThreefishHex);
     const k2 = sanitizeHexKey(keys.layer2SerpentHex);
     const k3 = sanitizeHexKey(keys.layer3ChaChaHex);
@@ -213,12 +198,6 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys }) => {
           return;
         }
         console.warn('Falling back to memory stream:', pickerErr);
-        if (selectedFile.size > maxSafeBytes) {
-          setError(
-            `Memory limit notice: In-memory fallback cannot safely buffer files larger than ${(maxSafeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB without risk of browser tab crash. Please choose a writable destination or process a smaller file.`
-          );
-          return;
-        }
         setStreamedDirectToDisk(false);
       }
     }
