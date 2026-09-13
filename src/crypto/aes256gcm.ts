@@ -9,6 +9,7 @@ import { gcm } from '@noble/ciphers/aes.js';
 export class Aes256Gcm {
   private cryptoKeyPromise: Promise<CryptoKey> | null = null;
   private rawKey: Uint8Array;
+  private isDestroyed = false;
 
   constructor(keyBytes: Uint8Array) {
     if (keyBytes.length !== 32) {
@@ -48,6 +49,7 @@ export class Aes256Gcm {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     this.rawKey.fill(0);
     this.cryptoKeyPromise = null;
   }
@@ -61,6 +63,9 @@ export class Aes256Gcm {
     nonce12: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<{ ciphertext: Uint8Array; tag: Uint8Array }> {
+    if (this.isDestroyed) {
+      throw new Error('Aes256Gcm has been destroyed');
+    }
     if (nonce12.length !== 12) {
       throw new Error('AES-256-GCM requires strictly a 12-byte nonce.');
     }
@@ -110,6 +115,9 @@ export class Aes256Gcm {
     tag16: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<Uint8Array> {
+    if (this.isDestroyed) {
+      throw new Error('Aes256Gcm has been destroyed');
+    }
     if (nonce12.length !== 12 || tag16.length !== 16) {
       throw new Error('Decryption failed. Check all keys.');
     }
@@ -157,6 +165,9 @@ export class Aes256Gcm {
     nonce12: Uint8Array,
     aad: Uint8Array = new Uint8Array()
   ): Promise<Uint8Array> {
+    if (this.isDestroyed) {
+      throw new Error('Aes256Gcm has been destroyed');
+    }
     if (nonce12.length !== 12 || contiguousCipherAndTag.length < 16) {
       throw new Error('Decryption failed. Check all keys.');
     }

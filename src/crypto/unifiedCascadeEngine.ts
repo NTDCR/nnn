@@ -132,6 +132,7 @@ export class UnifiedCascadeEngine {
   private rawK1: Uint8Array;
   private rawK2: Uint8Array;
   private rawK3: Uint8Array;
+  private isDestroyed = false;
 
   private constructor(
     wasmInstance: WebAssembly.Instance,
@@ -214,12 +215,18 @@ export class UnifiedCascadeEngine {
     chunkIndex: number,
     aad: Uint8Array = new Uint8Array(0)
   ): Uint8Array {
+    if (this.isDestroyed) {
+      throw new Error('UnifiedCascadeEngine has been destroyed');
+    }
+    if (chunkIndex < 0 || !Number.isSafeInteger(chunkIndex)) {
+      throw new Error('Invalid chunk index');
+    }
     if (n1.length !== 16 || n2.length !== 16 || n3.length !== 12) {
       throw new Error('Invalid nonce length: Threefish(16B), Serpent(16B), ChaCha20(12B) required');
     }
     const dataLen = data.length;
     const aadLen = aad.length;
-    if (aadLen > 16) {
+    if (aadLen < 0 || !Number.isSafeInteger(aadLen) || aadLen > 16) {
       throw new Error('AAD length exceeds maximum buffer allocation (16 bytes)');
     }
     const required = DATA_OFFSET + dataLen + 64;
@@ -264,13 +271,20 @@ export class UnifiedCascadeEngine {
     tagChaCha: Uint8Array,
     aad: Uint8Array = new Uint8Array(0)
   ): void {
+    if (this.isDestroyed) {
+      data.fill(0);
+      throw new Error('UnifiedCascadeEngine has been destroyed');
+    }
+    if (chunkIndex < 0 || !Number.isSafeInteger(chunkIndex)) {
+      throw new Error('Invalid chunk index');
+    }
     if (tagChaCha.length !== 16 || n1.length !== 16 || n2.length !== 16 || n3.length !== 12) {
       throw new Error('Decryption failed. Check all keys.');
     }
 
     const dataLen = data.length;
     const aadLen = aad.length;
-    if (aadLen > 16) {
+    if (aadLen < 0 || !Number.isSafeInteger(aadLen) || aadLen > 16) {
       throw new Error('AAD length exceeds maximum buffer allocation (16 bytes)');
     }
     const required = DATA_OFFSET + dataLen + 64;
@@ -309,6 +323,7 @@ export class UnifiedCascadeEngine {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     try {
       const memU8 = new Uint8Array(this.memory.buffer);
       memU8.fill(0);

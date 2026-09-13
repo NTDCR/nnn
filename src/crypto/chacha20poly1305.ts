@@ -10,6 +10,7 @@ import { ChaChaSimdEngine } from './chachaSimdEngine.ts';
 export class ChaCha20Poly1305 {
   private rawKey: Uint8Array;
   private simdEngine: ChaChaSimdEngine | null = null;
+  private isDestroyed = false;
 
   constructor(keyBytes: Uint8Array) {
     if (keyBytes.length !== 32) {
@@ -41,6 +42,7 @@ export class ChaCha20Poly1305 {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     if (this.simdEngine) {
       this.simdEngine.destroy();
       this.simdEngine = null;
@@ -53,6 +55,9 @@ export class ChaCha20Poly1305 {
    * Returns 16-byte Poly1305 authentication tag
    */
   public encryptInPlace(data: Uint8Array, nonce12: Uint8Array, aad: Uint8Array = new Uint8Array()): Uint8Array {
+    if (this.isDestroyed) {
+      throw new Error('ChaCha20Poly1305 has been destroyed');
+    }
     if (nonce12.length !== 12) {
       throw new Error('ChaCha20-Poly1305 requires strictly a 12-byte nonce.');
     }
@@ -73,6 +78,10 @@ export class ChaCha20Poly1305 {
    * Throws constant-time error if tag verification fails
    */
   public decryptInPlace(data: Uint8Array, nonce12: Uint8Array, tag16: Uint8Array, aad: Uint8Array = new Uint8Array()): void {
+    if (this.isDestroyed) {
+      data.fill(0);
+      throw new Error('ChaCha20Poly1305 has been destroyed');
+    }
     if (nonce12.length !== 12 || tag16.length !== 16) {
       data.fill(0);
       throw new Error('Decryption failed. Check all keys.');

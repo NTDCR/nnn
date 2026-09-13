@@ -51,6 +51,7 @@ export class WebGpuCascadeEngine implements WebGpuEngineInstance {
   public isGpuAccelerated: boolean = true;
   private device: GPUDevice;
   private chachaPipeline: GPUComputePipeline | null = null;
+  private isDestroyed = false;
 
   private constructor(device: GPUDevice) {
     this.device = device;
@@ -91,7 +92,7 @@ export class WebGpuCascadeEngine implements WebGpuEngineInstance {
     nonce: Uint8Array,
     startCounter: number
   ): Promise<void> {
-    if (!this.chachaPipeline) throw new Error('Pipeline not initialized');
+    if (this.isDestroyed || !this.chachaPipeline) throw new Error('Pipeline not initialized');
     if (key.byteLength !== 32 || nonce.byteLength < 12) {
       throw new Error('WebGPU ChaCha20 requires strictly a 32-byte key and at least a 12-byte nonce.');
     }
@@ -173,7 +174,7 @@ export class WebGpuCascadeEngine implements WebGpuEngineInstance {
 
       // 4. Map back results to input array
       await readbackBuffer.mapAsync(GPUMapMode.READ);
-      const mapped = new Uint8Array(readbackBuffer.getMappedRange(0, byteLength));
+      const mapped = new Uint8Array(readbackBuffer.getMappedRange()).subarray(0, byteLength);
       data.set(mapped);
       readbackBuffer.unmap();
     } finally {
@@ -187,6 +188,7 @@ export class WebGpuCascadeEngine implements WebGpuEngineInstance {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     this.chachaPipeline = null;
   }
 }

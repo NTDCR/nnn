@@ -65,8 +65,12 @@ export function fillRandomBytes(buffer: Uint8Array): void {
 
 export function generateRandomKey(byteLength: number = 32): string {
   const bytes = new Uint8Array(byteLength);
-  fillRandomBytes(bytes);
-  return bytesToHex(bytes);
+  try {
+    fillRandomBytes(bytes);
+    return bytesToHex(bytes);
+  } finally {
+    bytes.fill(0);
+  }
 }
 
 export function calculateEntropyScore(hex: string, expectedBits: number = 256): { bits: number; label: string; color: string } {
@@ -145,6 +149,7 @@ export class CascadePipeline {
   private chacha: ChaCha20Poly1305;
   private aes: Aes256Gcm;
   private unifiedEngine: UnifiedCascadeEngine | null = null;
+  private isDestroyed = false;
 
   private getChunkAad(chunkIndex: number): Uint8Array {
     const aad = new Uint8Array(8);
@@ -214,6 +219,9 @@ export class CascadePipeline {
     nonceAes: Uint8Array,
     inPlace: boolean = true
   ): Promise<{ ciphertext: Uint8Array; tagChaCha: Uint8Array; tagAes: Uint8Array }> {
+    if (this.isDestroyed) {
+      throw new Error('CascadePipeline has been destroyed');
+    }
     const work = inPlace ? chunkData : new Uint8Array(chunkData);
     const aadBuf = this.getChunkAad(chunkIndex);
 
@@ -264,6 +272,9 @@ export class CascadePipeline {
     tagChaCha: Uint8Array,
     tagAes: Uint8Array
   ): Promise<Uint8Array> {
+    if (this.isDestroyed) {
+      throw new Error('CascadePipeline has been destroyed');
+    }
     let afterAes: Uint8Array | null = null;
     try {
       const aadBuf = this.getChunkAad(chunkIndex);
@@ -316,6 +327,9 @@ export class CascadePipeline {
     nonceAes: Uint8Array,
     tagChaCha: Uint8Array
   ): Promise<Uint8Array> {
+    if (this.isDestroyed) {
+      throw new Error('CascadePipeline has been destroyed');
+    }
     let afterAes: Uint8Array | null = null;
     try {
       const aadBuf = this.getChunkAad(chunkIndex);
@@ -357,6 +371,7 @@ export class CascadePipeline {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     if (this.unifiedEngine) {
       this.unifiedEngine.destroy();
       this.unifiedEngine = null;

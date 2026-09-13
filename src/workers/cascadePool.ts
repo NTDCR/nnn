@@ -303,7 +303,7 @@ async function executePoolEncryption(params: {
   const originalSize = file.size;
   const chunkCount = Math.max(1, Math.ceil(originalSize / CHUNK_SIZE));
 
-  const hmacKey = deriveHmacKey(k1, k2);
+  let hmacKey: Uint8Array | null = deriveHmacKey(k1, k2);
   const hmacHasher = hmac.create(sha256, hmacKey);
 
   const nonceThreefish = new Uint8Array(16);
@@ -603,6 +603,19 @@ async function executePoolEncryption(params: {
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),
   };
   } finally {
+    if (hmacKey) {
+      hmacKey.fill(0);
+      hmacKey = null;
+    }
+    for (const b of completedChunks.values()) {
+      b.fill(0);
+    }
+    completedChunks.clear();
+    for (const b of rawChunkMap.values()) {
+      b.fill(0);
+    }
+    rawChunkMap.clear();
+
     signal?.removeEventListener('abort', onAbort);
     const cancelErr = new Error(signal?.aborted ? 'Aborted' : 'Encryption stream interrupted');
     for (const p of pendingEncMap.values()) {
@@ -651,7 +664,12 @@ async function executePoolDecryption(params: {
   const rawMetaBytes = new Uint8Array(metaBuffer);
 
   const unmasked = await maskMetadataBlob(rawMetaBytes, k4);
-  const metadata = decodeMetadataBlob(unmasked);
+  let metadata: ReturnType<typeof decodeMetadataBlob>;
+  try {
+    metadata = decodeMetadataBlob(unmasked);
+  } finally {
+    unmasked.fill(0);
+  }
 
   // Adversarial integrity check
   const expectedOrderHash = sha256(new TextEncoder().encode(CASCADE_ORDER_TAG_STRING));
@@ -668,7 +686,7 @@ async function executePoolDecryption(params: {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
-  const hmacKey = deriveHmacKey(k1, k2);
+  let hmacKey: Uint8Array | null = deriveHmacKey(k1, k2);
   const hmacHasher = hmac.create(sha256, hmacKey);
 
   onStart?.(chunkCount, originalSize);
@@ -945,6 +963,19 @@ async function executePoolDecryption(params: {
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),
   };
   } finally {
+    if (hmacKey) {
+      hmacKey.fill(0);
+      hmacKey = null;
+    }
+    for (const b of completedChunks.values()) {
+      b.fill(0);
+    }
+    completedChunks.clear();
+    for (const b of rawHmacMap.values()) {
+      b.fill(0);
+    }
+    rawHmacMap.clear();
+
     signal?.removeEventListener('abort', onAbort);
     const cancelErr = new Error(signal?.aborted ? 'Aborted' : GENERIC_DECRYPT_ERROR);
     for (const p of pendingDecMap.values()) {

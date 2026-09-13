@@ -34,10 +34,14 @@ export class Threefish1024 {
   private blockBuffer: Uint8Array = new Uint8Array(128);
   private blockView: DataView;
   private blockU32: Uint32Array;
+  private isDestroyed = false;
 
   constructor(keyBytes: Uint8Array, tweakBytes: Uint8Array) {
-    if (keyBytes.length !== 128) {
+    if (!keyBytes || keyBytes.length !== 128) {
       throw new Error('Threefish-1024 requires strictly a 128-byte (1024-bit) key.');
+    }
+    if (!tweakBytes || tweakBytes.length !== 16) {
+      throw new Error('Threefish-1024 requires strictly a 16-byte (128-bit) tweak.');
     }
     this.blockView = new DataView(this.blockBuffer.buffer);
     this.blockU32 = new Uint32Array(this.blockBuffer.buffer);
@@ -394,6 +398,9 @@ export class Threefish1024 {
    * Operates on native 32-bit CPU register words with 4-way superscalar interleaving.
    */
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
+    if (this.isDestroyed) {
+      throw new Error('Threefish1024 has been destroyed');
+    }
     if (baseNonce.length !== 16) {
       throw new Error('Threefish-1024 CTR requires strictly a 16-byte nonce.');
     }
@@ -508,6 +515,7 @@ export class Threefish1024 {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     if (this.simdEngine) {
       this.simdEngine.destroy();
       this.simdEngine = null;

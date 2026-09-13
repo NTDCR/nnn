@@ -76,6 +76,9 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         }
         writableStreamRef.current = null;
       }
+      for (const c of chunksCollectorRef.current) {
+        c.fill(0);
+      }
       chunksCollectorRef.current = [];
       // Delayed cleanup for any active blob URLs so in-flight browser downloads (e.g. Firefox) are not abruptly aborted
       activeBlobUrlsRef.current.forEach((url) => {
@@ -346,6 +349,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         }
         writableStreamRef.current = null;
       }
+      for (const c of diskWriteBuffer) {
+        c.fill(0);
+      }
+      diskWriteBuffer = [];
+      diskBufferedBytes = 0;
+      for (const c of chunksCollectorRef.current) {
+        c.fill(0);
+      }
       chunksCollectorRef.current = [];
       setIsProcessing(false);
       setProgress(null);
@@ -373,6 +384,9 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     if (writableStreamRef.current) {
       writableStreamRef.current.abort().catch(() => {});
       writableStreamRef.current = null;
+    }
+    for (const c of chunksCollectorRef.current) {
+      c.fill(0);
     }
     chunksCollectorRef.current = [];
     clearDownloadUrl();

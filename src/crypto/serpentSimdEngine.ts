@@ -54,6 +54,7 @@ const DATA_OFFSET = BASE_OFFSET + 256;
 
 export class SerpentSimdEngine {
   private memory: WebAssembly.Memory;
+  private isDestroyed = false;
   private exports: {
     initSerpent: (keyPtr: number) => void;
     processCtrSimd: (dataPtr: number, dataLen: number, noncePtr: number, chunkIndex: number) => void;
@@ -112,6 +113,9 @@ export class SerpentSimdEngine {
   }
 
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
+    if (this.isDestroyed) {
+      throw new Error('SerpentSimdEngine has been destroyed');
+    }
     if (baseNonce.length !== 16) {
       throw new Error('Serpent-256 CTR requires strictly a 16-byte nonce.');
     }
@@ -132,6 +136,7 @@ export class SerpentSimdEngine {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     try {
       const memU8 = new Uint8Array(this.memory.buffer);
       memU8.fill(0);

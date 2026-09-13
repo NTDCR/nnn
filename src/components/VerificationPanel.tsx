@@ -1,22 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { runSelfVerificationTests, TestVectorResult, TOTAL_TEST_COUNT } from '../crypto/testVectors.ts';
 import { CheckCircle2, XCircle, Play, ShieldAlert, BookOpen, Terminal, Zap } from 'lucide-react';
 
 export const VerificationPanel: React.FC = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<TestVectorResult[] | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const handleRunTests = async () => {
     setIsRunning(true);
     setResults([]);
     try {
       await runSelfVerificationTests((res) => {
-        setResults((prev) => [...(prev || []), res]);
+        if (isMountedRef.current) {
+          setResults((prev) => [...(prev || []), res]);
+        }
       });
     } catch (err) {
       console.error('Test execution error:', err);
     } finally {
-      setIsRunning(false);
+      if (isMountedRef.current) {
+        setIsRunning(false);
+      }
     }
   };
 

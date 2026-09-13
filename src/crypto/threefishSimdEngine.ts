@@ -54,6 +54,7 @@ const DATA_OFFSET = BASE_OFFSET + 1024;
 
 export class ThreefishSimdEngine {
   private memory: WebAssembly.Memory;
+  private isDestroyed = false;
   private exports: {
     initThreefish: (keyPtr: number, tweakPtr: number) => void;
     processCtrSimd: (dataPtr: number, dataLen: number, noncePtr: number, chunkIndex: number) => void;
@@ -113,6 +114,9 @@ export class ThreefishSimdEngine {
   }
 
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
+    if (this.isDestroyed) {
+      throw new Error('ThreefishSimdEngine has been destroyed');
+    }
     if (baseNonce.length !== 16) {
       throw new Error('Threefish-1024 CTR requires strictly a 16-byte nonce.');
     }
@@ -133,6 +137,7 @@ export class ThreefishSimdEngine {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     try {
       const memU8 = new Uint8Array(this.memory.buffer);
       memU8.fill(0);

@@ -106,6 +106,7 @@ export class Serpent256 {
   private blockBuffer: Uint8Array = new Uint8Array(16);
   private blockView: DataView;
   private keystream: Uint32Array = new Uint32Array(8);
+  private isDestroyed = false;
 
   constructor(keyBytes: Uint8Array) {
     if (keyBytes.length !== 32) {
@@ -321,6 +322,9 @@ export class Serpent256 {
   }
 
   public encryptBlock(block: Uint8Array): void {
+    if (this.isDestroyed) {
+      throw new Error('Serpent256 has been destroyed');
+    }
     const view = block === this.blockBuffer ? this.blockView : new DataView(block.buffer, block.byteOffset, 16);
     const x0 = view.getUint32(0, true);
     const x1 = view.getUint32(4, true);
@@ -336,6 +340,9 @@ export class Serpent256 {
   }
 
   public processCtr(data: Uint8Array, baseNonce: Uint8Array, chunkIndex: number): void {
+    if (this.isDestroyed) {
+      throw new Error('Serpent256 has been destroyed');
+    }
     if (baseNonce.length !== 16) {
       throw new Error('Serpent-256 CTR requires strictly a 16-byte nonce.');
     }
@@ -418,6 +425,7 @@ export class Serpent256 {
   }
 
   public destroy(): void {
+    this.isDestroyed = true;
     if (this.simdEngine) {
       this.simdEngine.destroy();
       this.simdEngine = null;

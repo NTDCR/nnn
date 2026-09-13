@@ -52,7 +52,10 @@ export function deriveHmacKey(k1: Uint8Array, k2: Uint8Array): Uint8Array {
 /**
  * Derives a 32-byte subkey for metadata masking using SHA-256 (via @noble/hashes)
  */
-async function deriveMetadataKey(key4: Uint8Array): Promise<Uint8Array> {
+export async function deriveMetadataKey(key4: Uint8Array): Promise<Uint8Array> {
+  if (key4.length !== 32) {
+    throw new Error('Metadata key derivation requires strictly a 32-byte key.');
+  }
   const label = new TextEncoder().encode('FORTKNOX_METADATA_V1');
   const combined = new Uint8Array(key4.length + label.length);
   try {
@@ -67,7 +70,10 @@ async function deriveMetadataKey(key4: Uint8Array): Promise<Uint8Array> {
 /**
  * Derives a 12-byte nonce from Key 4 with optional container salt for the tail pointer
  */
-async function derivePointerNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
+export async function derivePointerNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
+  if (key4.length !== 32) {
+    throw new Error('Pointer nonce derivation requires strictly a 32-byte key.');
+  }
   const label = new TextEncoder().encode('FORTKNOX_POINTER_NONCE_V1');
   const saltLen = salt ? salt.length : 0;
   const combined = new Uint8Array(key4.length + label.length + saltLen);
@@ -86,7 +92,10 @@ async function derivePointerNonce(key4: Uint8Array, salt?: Uint8Array): Promise<
 /**
  * Derives a 12-byte nonce from Key 4 with optional container salt for metadata masking
  */
-async function deriveMetadataNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
+export async function deriveMetadataNonce(key4: Uint8Array, salt?: Uint8Array): Promise<Uint8Array> {
+  if (key4.length !== 32) {
+    throw new Error('Metadata nonce derivation requires strictly a 32-byte key.');
+  }
   const label = new TextEncoder().encode('FORTKNOX_METADATA_NONCE_V1');
   const saltLen = salt ? salt.length : 0;
   const combined = new Uint8Array(key4.length + label.length + saltLen);
@@ -348,6 +357,7 @@ export async function decryptTailPointer(
         const view = new DataView(decrypted);
         const offsetBig = view.getBigUint64(0, true);
         const length = view.getUint32(8, true);
+        new Uint8Array(decrypted).fill(0);
 
         if (length === METADATA_SIZE && offsetBig <= BigInt(Number.MAX_SAFE_INTEGER)) {
           const offset = Number(offsetBig);
@@ -367,6 +377,7 @@ export async function decryptTailPointer(
       const view = new DataView(decrypted.buffer, decrypted.byteOffset, decrypted.byteLength);
       const offsetBig = view.getBigUint64(0, true);
       const length = view.getUint32(8, true);
+      decrypted.fill(0);
 
       if (length === METADATA_SIZE && offsetBig <= BigInt(Number.MAX_SAFE_INTEGER)) {
         const offset = Number(offsetBig);

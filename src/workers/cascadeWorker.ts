@@ -39,24 +39,31 @@ self.onmessage = async (e: MessageEvent) => {
       // Micro-warmup pass to tier up V8 TurboFan / WebAssembly for immediate peak bidirectional speed
       const warmBuf = new Uint8Array(65536);
       const warmNonce = new Uint8Array(16);
-      const warmEnc = await pooledEngine.encryptChunk(
-        warmBuf,
-        0,
-        warmNonce,
-        warmNonce,
-        warmNonce.subarray(0, 12),
-        warmNonce.subarray(0, 12)
-      );
-      await pooledEngine.decryptChunk(
-        warmEnc.ciphertext,
-        0,
-        warmNonce,
-        warmNonce,
-        warmNonce.subarray(0, 12),
-        warmNonce.subarray(0, 12),
-        warmEnc.tagChaCha,
-        warmEnc.tagAes
-      );
+      try {
+        const warmEnc = await pooledEngine.encryptChunk(
+          warmBuf,
+          0,
+          warmNonce,
+          warmNonce,
+          warmNonce.subarray(0, 12),
+          warmNonce.subarray(0, 12)
+        );
+        const warmDec = await pooledEngine.decryptChunk(
+          warmEnc.ciphertext,
+          0,
+          warmNonce,
+          warmNonce,
+          warmNonce.subarray(0, 12),
+          warmNonce.subarray(0, 12),
+          warmEnc.tagChaCha,
+          warmEnc.tagAes
+        );
+        warmDec.fill(0);
+        warmEnc.ciphertext.fill(0);
+      } finally {
+        warmBuf.fill(0);
+        warmNonce.fill(0);
+      }
 
       self.postMessage({ type: 'POOL_READY' });
     } catch (err: unknown) {
@@ -75,39 +82,46 @@ self.onmessage = async (e: MessageEvent) => {
       if (!pooledEngine) throw new Error('Engine not initialized');
       const probeBuf = new Uint8Array(131072);
       const probeNonce = new Uint8Array(16);
+      try {
+        // Warmup pass to trigger V8 TurboFan / WebKit FTL tier-up compilation for BOTH Encrypt & Decrypt
+        const enc = await pooledEngine.encryptChunk(
+          probeBuf,
+          0,
+          probeNonce,
+          probeNonce,
+          probeNonce.subarray(0, 12),
+          probeNonce.subarray(0, 12)
+        );
+        const dec = await pooledEngine.decryptChunk(
+          enc.ciphertext,
+          0,
+          probeNonce,
+          probeNonce,
+          probeNonce.subarray(0, 12),
+          probeNonce.subarray(0, 12),
+          enc.tagChaCha,
+          enc.tagAes
+        );
+        dec.fill(0);
+        enc.ciphertext.fill(0);
 
-      // Warmup pass to trigger V8 TurboFan / WebKit FTL tier-up compilation for BOTH Encrypt & Decrypt
-      const enc = await pooledEngine.encryptChunk(
-        probeBuf,
-        0,
-        probeNonce,
-        probeNonce,
-        probeNonce.subarray(0, 12),
-        probeNonce.subarray(0, 12)
-      );
-      await pooledEngine.decryptChunk(
-        enc.ciphertext,
-        0,
-        probeNonce,
-        probeNonce,
-        probeNonce.subarray(0, 12),
-        probeNonce.subarray(0, 12),
-        enc.tagChaCha,
-        enc.tagAes
-      );
-
-      // Measured benchmark pass
-      const start = performance.now();
-      await pooledEngine.encryptChunk(
-        probeBuf,
-        0,
-        probeNonce,
-        probeNonce,
-        probeNonce.subarray(0, 12),
-        probeNonce.subarray(0, 12)
-      );
-      const elapsedMs = performance.now() - start;
-      self.postMessage({ type: 'PROBE_DONE', elapsedMs });
+        // Measured benchmark pass
+        const start = performance.now();
+        const encBench = await pooledEngine.encryptChunk(
+          probeBuf,
+          0,
+          probeNonce,
+          probeNonce,
+          probeNonce.subarray(0, 12),
+          probeNonce.subarray(0, 12)
+        );
+        const elapsedMs = performance.now() - start;
+        encBench.ciphertext.fill(0);
+        self.postMessage({ type: 'PROBE_DONE', elapsedMs });
+      } finally {
+        probeBuf.fill(0);
+        probeNonce.fill(0);
+      }
     } catch {
       self.postMessage({ type: 'PROBE_DONE', elapsedMs: 9999 });
     }
@@ -195,9 +209,13 @@ self.onmessage = async (e: MessageEvent) => {
           tagAes
         );
       }
+      const isOriginalBuffer = plain.byteLength === plain.buffer.byteLength && plain.byteOffset === 0 && plain.buffer === chunkWithTags.buffer;
       const outBuffer = (plain.byteLength === plain.buffer.byteLength && plain.byteOffset === 0)
         ? plain.buffer
         : plain.slice().buffer;
+      if (!isOriginalBuffer) {
+        chunkWithTags.fill(0);
+      }
       postWorkerMessage(
         {
           type: 'CHUNK_DONE',
