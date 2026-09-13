@@ -44,14 +44,14 @@ interface WorkerProbeResult {
 let cachedCalibratedWorkers: number | null = null;
 
 /**
- * Calibrates the worker pool and strictly filters out Efficiency (E) cores.
- * Measures cryptographic ALU execution time per worker instance.
- * Workers with elapsedMs > 1.5x of the fastest core are identified as running
- * on E-cores (or throttled cores) and are immediately terminated.
- * Only verified Performance (P) cores are retained.
+ * Calibrates the worker pool and strictly filters out Efficiency (E) cores on hybrid CPU architectures.
+ * Only executes when > 4 logical threads are available and mode is 'auto'.
+ * Standard 2-core / 4-thread CPUs (all P-cores) bypass filtering completely.
+ * On hybrid systems, true E-cores (>2.2x slower than fastest P-core) are pruned.
  */
 async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Worker[]> {
-  if (candidateWorkers.length <= 1) {
+  // Systems with 4 or fewer threads are entirely Performance cores (no E-cores)
+  if (candidateWorkers.length <= 4) {
     return candidateWorkers;
   }
 
@@ -84,27 +84,28 @@ async function calibrateAndFilterPCores(candidateWorkers: Worker[]): Promise<Wor
     const sorted = [...results].sort((a, b) => a.elapsedMs - b.elapsedMs);
     const fastest = Math.max(1.0, sorted[0].elapsedMs);
 
-    // Strict P-Core threshold: Must execute within 1.5x of fastest core.
-    // Efficiency cores on x86 and ARM typically take 1.8x to 3.5x longer.
+    // Strict P-Core threshold: True Efficiency cores are 2.2x to 3.5x slower.
+    // Preserves all Performance cores without false-positive pruning from scheduler jitter.
     const pCoreWorkers: Worker[] = [];
     const eCoreWorkers: Worker[] = [];
 
     for (const res of sorted) {
-      if (res.elapsedMs <= fastest * 1.5) {
+      if (res.elapsedMs <= fastest * 2.2) {
         pCoreWorkers.push(res.worker);
       } else {
         eCoreWorkers.push(res.worker);
       }
     }
 
-    // Immediately terminate all identified E-core workers
-    for (const eWorker of eCoreWorkers) {
-      eWorker.terminate();
+    // Safety: ensure at least 4 workers (or candidate count) are retained
+    const minRetained = Math.min(candidateWorkers.length, 4);
+    while (pCoreWorkers.length < minRetained && eCoreWorkers.length > 0) {
+      pCoreWorkers.push(eCoreWorkers.pop()!);
     }
 
-    // Safety: ensure at least 1 worker is available
-    if (pCoreWorkers.length === 0 && candidateWorkers.length > 0) {
-      pCoreWorkers.push(candidateWorkers[0]);
+    // Terminate verified E-core workers
+    for (const eWorker of eCoreWorkers) {
+      eWorker.terminate();
     }
 
     cachedCalibratedWorkers = pCoreWorkers.length;
@@ -143,8 +144,8 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
       targetWorkerCount = coreConcurrency;
     } else {
       // 'auto' mode:
-      if (hardwareConcurrency < 4) {
-        targetWorkerCount = 2;
+      if (hardwareConcurrency <= 4) {
+        targetWorkerCount = Math.max(2, hardwareConcurrency);
       } else if (cachedCalibratedWorkers !== null) {
         targetWorkerCount = cachedCalibratedWorkers;
       } else {
@@ -183,9 +184,9 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 
     if (signal?.aborted) throw new Error('Aborted');
 
-    // Strict P-Core Enforcement: Micro-calibration identifies & terminates all E-core worker instances
+    // Strict P-Core Enforcement: Only calibrate when in 'auto' mode and system has > 4 threads
     let activeWorkers = workers;
-    if (isMultiChunk && workers.length > 1 && coreConcurrency !== 'webgpu') {
+    if (isMultiChunk && workers.length > 4 && coreConcurrency === 'auto') {
       activeWorkers = await calibrateAndFilterPCores(workers);
     }
 
@@ -316,13 +317,13 @@ async function executePoolEncryption(params: {
     });
   };
 
-  // Real-time sliding window speed calculation (2.5s window)
+  // Real-time sliding window speed calculation (2.0s window) with weighted blend
   interface SpeedSample {
     time: number;
     bytes: number;
   }
   const speedSamples: SpeedSample[] = [];
-  const WINDOW_MS = 2500;
+  const WINDOW_MS = 2000;
 
   const calculateLiveSpeed = (chunkBytes: number): number => {
     const now = performance.now();
@@ -330,20 +331,22 @@ async function executePoolEncryption(params: {
     while (speedSamples.length > 1 && now - speedSamples[0].time > WINDOW_MS) {
       speedSamples.shift();
     }
+    const elapsedTotalSec = Math.max(0.05, (now - startTime) / 1000);
+    const overallSpeed = processedBytes / (1024 * 1024) / elapsedTotalSec;
+
     if (speedSamples.length < 2) {
-      const elapsed = Math.max(0.01, (now - startTime) / 1000);
-      return processedBytes / (1024 * 1024) / elapsed;
+      return overallSpeed;
     }
     const windowSec = (now - speedSamples[0].time) / 1000;
-    if (windowSec < 0.05) {
-      const elapsed = Math.max(0.01, (now - startTime) / 1000);
-      return processedBytes / (1024 * 1024) / elapsed;
+    if (windowSec < 0.1) {
+      return overallSpeed;
     }
     let windowBytes = 0;
-    for (let i = 1; i < speedSamples.length; i++) {
+    for (let i = 0; i < speedSamples.length; i++) {
       windowBytes += speedSamples[i].bytes;
     }
-    return windowBytes / (1024 * 1024) / windowSec;
+    const windowSpeed = windowBytes / (1024 * 1024) / windowSec;
+    return windowSpeed * 0.7 + overallSpeed * 0.3;
   };
 
   // Setup permanent message dispatch router for each worker (eliminates per-chunk addEventListener/removeEventListener churn)
@@ -414,11 +417,11 @@ async function executePoolEncryption(params: {
       drainReadyChunks();
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
-      const maxBuffered = Math.max(4, workers.length * 3);
+      const maxBuffered = Math.max(16, workers.length * 4);
       while (completedChunks.size >= maxBuffered && !writerError) {
         if (signal?.aborted) throw new Error('Aborted');
         await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 50);
+          const timer = setTimeout(resolve, 2);
           backpressureWaiters.push(() => {
             clearTimeout(timer);
             resolve();
@@ -594,13 +597,13 @@ async function executePoolDecryption(params: {
     });
   };
 
-  // Real-time sliding window speed calculation (2.5s window)
+  // Real-time sliding window speed calculation (2.0s window) with weighted blend
   interface SpeedSample {
     time: number;
     bytes: number;
   }
   const speedSamples: SpeedSample[] = [];
-  const WINDOW_MS = 2500;
+  const WINDOW_MS = 2000;
 
   const calculateLiveSpeed = (chunkBytes: number): number => {
     const now = performance.now();
@@ -608,20 +611,22 @@ async function executePoolDecryption(params: {
     while (speedSamples.length > 1 && now - speedSamples[0].time > WINDOW_MS) {
       speedSamples.shift();
     }
+    const elapsedTotalSec = Math.max(0.05, (now - startTime) / 1000);
+    const overallSpeed = processedBytes / (1024 * 1024) / elapsedTotalSec;
+
     if (speedSamples.length < 2) {
-      const elapsed = Math.max(0.01, (now - startTime) / 1000);
-      return processedBytes / (1024 * 1024) / elapsed;
+      return overallSpeed;
     }
     const windowSec = (now - speedSamples[0].time) / 1000;
-    if (windowSec < 0.05) {
-      const elapsed = Math.max(0.01, (now - startTime) / 1000);
-      return processedBytes / (1024 * 1024) / elapsed;
+    if (windowSec < 0.1) {
+      return overallSpeed;
     }
     let windowBytes = 0;
-    for (let i = 1; i < speedSamples.length; i++) {
+    for (let i = 0; i < speedSamples.length; i++) {
       windowBytes += speedSamples[i].bytes;
     }
-    return windowBytes / (1024 * 1024) / windowSec;
+    const windowSpeed = windowBytes / (1024 * 1024) / windowSec;
+    return windowSpeed * 0.7 + overallSpeed * 0.3;
   };
 
   // Background pipelined chunk prefetcher for encrypted chunks
@@ -694,11 +699,11 @@ async function executePoolDecryption(params: {
       drainReadyChunks();
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
-      const maxBuffered = Math.max(4, workers.length * 3);
+      const maxBuffered = Math.max(16, workers.length * 4);
       while (completedChunks.size >= maxBuffered && !writerError) {
         if (signal?.aborted) throw new Error('Aborted');
         await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 50);
+          const timer = setTimeout(resolve, 2);
           backpressureWaiters.push(() => {
             clearTimeout(timer);
             resolve();
