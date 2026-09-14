@@ -438,6 +438,12 @@ async function executePoolEncryption(params: {
 
   const isWavCarrier = Boolean(outputFileName && /\.wav$/i.test(outputFileName));
   const blindDelta = deriveBlindPointerDelta(k4, BLIND_MAX_DELTA);
+
+  // Pre-metadata jitter: 1 KB to 16 KB CSPRNG noise to obliterate fixed chunk-to-metadata boundary
+  const preRand = new Uint16Array(1);
+  crypto.getRandomValues(preRand);
+  const preMetaJitterLen = 1024 + (preRand[0] % 15360);
+
   let prefixJitterLen = antiForensicPadding && antiForensicPadding >= 1024 ? Math.floor(antiForensicPadding) : 0;
   if (prefixJitterLen === 0) {
     // Strict invariant: CSPRNG jitter is mandatory on all containers (1 KB - 64 KB)
@@ -446,7 +452,7 @@ async function executePoolEncryption(params: {
     prefixJitterLen = 1024 + (randBuf[0] % 64512);
   }
   const suffixJitterLen = blindDelta;
-  const totalContainerBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + METADATA_SIZE + prefixJitterLen + POINTER_BLOCK_SIZE + suffixJitterLen;
+  const totalContainerBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + preMetaJitterLen + METADATA_SIZE + prefixJitterLen + POINTER_BLOCK_SIZE + suffixJitterLen;
 
   let wavCarrierHeader: Uint8Array | null = null;
   if (isWavCarrier) {
@@ -727,7 +733,14 @@ async function executePoolEncryption(params: {
     metadata.fill(0);
   }
 
-  const metadataOffset = chunkCount * ENCRYPTED_CHUNK_SIZE;
+  const metadataOffset = chunkCount * ENCRYPTED_CHUNK_SIZE + preMetaJitterLen;
+
+  // Stream pre-metadata jitter noise (destroys chunk-to-metadata boundary)
+  const preMetaBuf = new Uint8Array(preMetaJitterLen);
+  fillRandomBytes(preMetaBuf);
+  await onChunkOutput(preMetaBuf);
+  preMetaBuf.fill(0);
+
   const metaCopy = new Uint8Array(maskedMeta);
   await onChunkOutput(metaCopy);
 
@@ -878,7 +891,7 @@ async function executePoolDecryption(params: {
 
   const { originalSize, chunkCount, nonceThreefish, nonceSerpent, nonceChaCha20, nonceAes256 } = metadata;
 
-  if (chunkCount * ENCRYPTED_CHUNK_SIZE !== metadataOffset) {
+  if (metadataOffset < chunkCount * ENCRYPTED_CHUNK_SIZE) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
   if (originalSize < 0 || originalSize > chunkCount * CHUNK_SIZE || (chunkCount > 1 && originalSize <= (chunkCount - 1) * CHUNK_SIZE)) {

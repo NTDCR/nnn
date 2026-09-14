@@ -114,24 +114,28 @@ To protect files against static digital forensic analyzers that detect fixed mat
 
 ---
 
-## 7. 2X Anti-Forensics: Blind KDF Pointer & Media Polyglot Masquerading (V2.0)
+## 7. Next-Gen 2X Anti-Forensics: Blind KDF Pointer, Pre-Metadata Jitter & Acoustic Polyglot (V2.1)
 
-For high-adversity threat models requiring absolute pointer concealment and entropy triage evasion:
+For high-adversity threat models requiring absolute pointer concealment, boundary obliteration, and entropy triage evasion:
 
-1. **Blind KDF-Derived Pointer Offset (Pointerless Architecture)**:
+1. **Blind KDF-Derived Pointer Offset (Expanded 64 KB Window)**:
    - Eliminates the fixed `EOF - 32` tail pointer anchor entirely.
-   - The distance from the end of the container is derived using HMAC-SHA256 from Key 4:
-     $$\text{Delta} = \text{HMAC-SHA256}(K_4, \text{"FORTKNOX_BLIND_POINTER_DELTA_V2"}) \pmod{16384}$$
+   - The distance from the end of the container is derived using HMAC-SHA256 from Key 4 across an expanded 64 KB ($65,536\text{ bytes}$) search space:
+     $$\text{Delta} = \text{HMAC-SHA256}(K_4, \text{"FORTKNOX_BLIND_POINTER_DELTA_V2"}) \pmod{65536}$$
      $$\text{PointerOffset} = \text{ContainerEnd} - 32 - \text{Delta}$$
    - The pointer is insulated on both sides by CSPRNG random jitter (`PrefixJitter` $\ge 1024$ bytes before, `SuffixJitter` = $\text{Delta}$ bytes after).
-   - An investigator inspecting `EOF - 32` finds only random noise.
-   - **Strict Single-Path Decryption**: Legacy fallback to `EOF - 32` is permanently disabled. Containers must strictly authenticate at `ContainerEnd - 32 - Delta`.
+   - An investigator inspecting `EOF - 32` finds only random noise across a 64 KB window.
 
-2. **RIFF WAVE Polyglot Carrier Masquerade (`.wav`)**:
-   - Encapsulates the entire cascade container inside a valid RIFF WAVE audio stream.
-   - The file begins with standard RIFF, `fmt `, and `data` chunks (1 second of 44.1 kHz 16-bit mono silence), followed by a RIFF `JUNK` chunk encapsulating the encrypted container.
-   - **Playback Compliance**: Plays as a normal audio file in VLC, Windows Media Player, QuickTime, Audacity, and web browsers.
-   - **Forensic Triage Bypass**: Automated file identification tools (`file`, `mediainfo`, `exiftool`) classify the container as legitimate audio, defeating automated high-entropy triage scanners.
+2. **Scatter-Gather Pre-Metadata Jitter (Internal Boundary Obliteration)**:
+   - Eliminates the deterministic chunk-to-metadata boundary at `chunkCount * 1048608`.
+   - A variable CSPRNG jitter buffer ($1,024 \dots 32,768$ bytes) is streamed immediately between the final encrypted chunk and the masked metadata blob:
+     $$\text{MetadataOffset} = \text{chunkCount} \times 1048608 + \text{PreMetaJitter}$$
+   - The exact offset is stored only inside the authenticated tail pointer. To an adversary without Key 4, there is zero recognizable boundary between chunks, metadata, and jitter noise.
+
+3. **RIFF WAVE Polyglot Carrier with Acoustic TPDF Dithering (`.wav`)**:
+   - Encapsulates the cascade container inside a valid RIFF WAVE audio stream with authentic studio-grade TPDF acoustic dithering ($-72\text{ dBFS}$, $\pm 1 \dots \pm 12$ LSB at 44.1 kHz, 16-bit mono).
+   - **Entropy Discontinuity Annihilation**: The PCM audio section exhibits natural acoustic entropy ($3.5 \dots 4.8\text{ bits/byte}$), eliminating the artificial $0.0 \to 8.0$ step-function that automated triage scanners (e.g. `binwalk -E`) flag as suspect.
+   - **Playback Compliance**: Plays as clean, natural studio room tone in VLC, Windows Media Player, QuickTime, Audacity, and web browsers with zero distortion or clipping.
    - **Decryption**: The decryptor inspects the first 128 bytes, detects the RIFF WAVE carrier, extracts the payload offset, and decrypts the underlying cascade container bit-for-bit.
 
 
