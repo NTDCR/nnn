@@ -12,6 +12,27 @@ import { chacha20 } from '@noble/ciphers/chacha.js';
 import { gcm } from '@noble/ciphers/aes.js';
 import { ContainerMetadata } from '../types/crypto.ts';
 import { fillRandomBytes } from './cascade.ts';
+import {
+  protectMetadataBlob,
+  healMetadataBlob,
+  rsEncode,
+  rsDecode,
+  encodeInterleaved,
+  decodeInterleaved,
+  DEFAULT_RS_PARITY_BYTES,
+  DEFAULT_INTERLEAVE_DEPTH,
+} from './reedsolomon.ts';
+
+export {
+  protectMetadataBlob,
+  healMetadataBlob,
+  rsEncode,
+  rsDecode,
+  encodeInterleaved,
+  decodeInterleaved,
+  DEFAULT_RS_PARITY_BYTES,
+  DEFAULT_INTERLEAVE_DEPTH,
+};
 
 const METADATA_MAGIC = 0x464B4E31; // "FKN1"
 const CONTAINER_VERSION = 1;
@@ -178,11 +199,15 @@ export function encodeMetadataBlob(meta: Partial<ContainerMetadata> & {
     view.setBigUint64(144, BigInt(meta.lastModified), true);
   }
 
+  // Industrial Reed-Solomon Forward Error Correction (Critical Metadata Protection)
+  // Embeds 64-byte systematic RS parity into bytes 160-223 to protect headers from silent corruption
+  protectMetadataBlob(buf);
+
   return buf;
 }
 
 /**
- * Decodes the 512-byte metadata blob
+ * Decodes the 512-byte metadata blob with automatic Reed-Solomon self-healing
  */
 export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
   if (buf.length !== METADATA_SIZE) {
@@ -190,12 +215,22 @@ export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
   }
 
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  const magic = view.getUint32(0, true);
-  const version = view.getUint32(4, true);
+  let magic = view.getUint32(0, true);
+  let version = view.getUint32(4, true);
+
+  if (magic !== METADATA_MAGIC || version !== CONTAINER_VERSION) {
+    // Attempt Reed-Solomon error correction before failing
+    const healRes = healMetadataBlob(buf);
+    if (healRes.healed) {
+      magic = view.getUint32(0, true);
+      version = view.getUint32(4, true);
+    }
+  }
 
   if (magic !== METADATA_MAGIC || version !== CONTAINER_VERSION) {
     throw new Error('Decryption failed. Check all keys.');
   }
+
 
   const rawSizeBig = view.getBigUint64(8, true);
   const chunkCount = view.getUint32(16, true);
