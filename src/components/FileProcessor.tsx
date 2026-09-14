@@ -268,7 +268,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         targetFileName = `${safeRawName}.fortknox`;
       }
     } else {
-      const stripped = safeRawName.replace(/\.(fortknox|dat|bin|iso)$/i, '');
+      const stripped = safeRawName.replace(/\.(fortknox|dat|wav|bin|iso)$/i, '');
       if (stripped.length > 0 && stripped !== safeRawName) {
         targetFileName = stripped;
       } else {
@@ -656,13 +656,16 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
                 className="bg-transparent text-purple-200 font-mono text-[11px] outline-none cursor-pointer"
               >
                 <option value=".dat" className="bg-slate-900 text-slate-200">.dat (Raw Binary Data)</option>
+                <option value=".wav" className="bg-slate-900 text-slate-200">.wav (Playable Audio Polyglot)</option>
                 <option value=".bin" className="bg-slate-900 text-slate-200">.bin (Memory Image)</option>
                 <option value=".iso" className="bg-slate-900 text-slate-200">.iso (Disk Image)</option>
                 <option value=".fortknox" className="bg-slate-900 text-slate-200">.fortknox (Standard)</option>
               </select>
             </div>
             <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/70 border border-purple-800/60 text-purple-300 font-mono hidden lg:inline-flex items-center gap-1">
-              Modulo Signature: Annihilated • Entropy: 8.000
+              {stealthExtension === '.wav'
+                ? 'Audio Polyglot Active • Plays in Media Players • Bypasses Entropy Scanners'
+                : 'Blind KDF Offset • Modulo Annihilated • 0 Magic Bytes'}
             </span>
           </div>
         )}

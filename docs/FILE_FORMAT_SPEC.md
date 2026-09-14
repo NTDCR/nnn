@@ -111,3 +111,25 @@ To protect files against static digital forensic analyzers that detect fixed mat
 4. **Backward Compatibility**:
    - The decryptor verifies `offset + length + POINTER_BLOCK_SIZE <= containerSize`. Both unpadded legacy containers ($R = 0$) and anti-forensic padded containers ($R > 0$) decrypt seamlessly with 100% bit-for-bit parity.
 
+---
+
+## 7. 2X Anti-Forensics: Blind KDF Pointer & Media Polyglot Masquerading (V2.0)
+
+For high-adversity threat models requiring absolute pointer concealment and entropy triage evasion:
+
+1. **Blind KDF-Derived Pointer Offset (Pointerless Architecture)**:
+   - Eliminates the fixed `EOF - 32` tail pointer anchor.
+   - The distance from the end of the container is derived using HMAC-SHA256 from Key 4:
+     $$\text{Delta} = \text{HMAC-SHA256}(K_4, \text{"FORTKNOX_BLIND_POINTER_DELTA_V2"}) \pmod{16384}$$
+     $$\text{PointerOffset} = \text{ContainerEnd} - 32 - \text{Delta}$$
+   - The pointer is insulated on both sides by CSPRNG random jitter (`PrefixJitter` before, `SuffixJitter` after).
+   - An investigator inspecting `EOF - 32` finds only random noise.
+   - Decryption uses a constant-time trial: Attempt A evaluates the blind offset `EOF - 32 - Delta`; if unauthenticated, Attempt B evaluates legacy `EOF - 32` ($\text{Delta} = 0$).
+
+2. **RIFF WAVE Polyglot Carrier Masquerade (`.wav`)**:
+   - Encapsulates the entire cascade container inside a valid RIFF WAVE audio stream.
+   - The file begins with standard RIFF, `fmt `, and `data` chunks (1 second of 44.1 kHz 16-bit mono silence), followed by a RIFF `JUNK` chunk encapsulating the encrypted container.
+   - **Playback Compliance**: Plays as a normal audio file in VLC, Windows Media Player, QuickTime, Audacity, and web browsers.
+   - **Forensic Triage Bypass**: Automated file identification tools (`file`, `mediainfo`, `exiftool`) classify the container as legitimate audio, defeating automated high-entropy triage scanners.
+   - **Decryption**: The decryptor inspects the first 128 bytes, detects the RIFF WAVE carrier, extracts the payload offset, and decrypts the underlying cascade container bit-for-bit.
+

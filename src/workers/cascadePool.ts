@@ -17,6 +17,10 @@ import {
   encryptTailPointer,
   decryptTailPointer,
   deriveHmacKey,
+  BLIND_MAX_DELTA,
+  deriveBlindPointerDelta,
+  createWavCarrierHeader,
+  detectCarrierPayloadOffset,
 } from '../crypto/format.ts';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -378,6 +382,7 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
         k1,
         k2,
         k4,
+        outputFileName: options.outputFileName,
         onStart,
         onProgress,
         onChunkOutput,
@@ -431,9 +436,22 @@ async function executePoolEncryption(params: {
   crypto.getRandomValues(nonceChaCha);
   crypto.getRandomValues(nonceAes);
 
-  const paddingBytes = antiForensicPadding && antiForensicPadding > 0 ? Math.floor(antiForensicPadding) : 0;
-  const totalBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + METADATA_SIZE + paddingBytes + POINTER_BLOCK_SIZE;
+  const isWavCarrier = Boolean(outputFileName && /\.wav$/i.test(outputFileName));
+  const blindDelta = antiForensicPadding && antiForensicPadding > 0 ? deriveBlindPointerDelta(k4, BLIND_MAX_DELTA) : 0;
+  const prefixJitterLen = antiForensicPadding && antiForensicPadding > 0 ? Math.floor(antiForensicPadding) : 0;
+  const suffixJitterLen = blindDelta;
+  const totalContainerBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + METADATA_SIZE + prefixJitterLen + POINTER_BLOCK_SIZE + suffixJitterLen;
+
+  let wavCarrierHeader: Uint8Array | null = null;
+  if (isWavCarrier) {
+    wavCarrierHeader = createWavCarrierHeader(totalContainerBytes);
+  }
+  const totalBytes = (wavCarrierHeader ? wavCarrierHeader.length : 0) + totalContainerBytes;
   onStart?.(chunkCount, totalBytes);
+
+  if (wavCarrierHeader) {
+    await onChunkOutput(wavCarrierHeader);
+  }
 
   const startTime = performance.now();
   let processedBytes = 0;
@@ -708,13 +726,13 @@ async function executePoolEncryption(params: {
   await onChunkOutput(metaCopy);
 
   const salt16 = new Uint8Array(16);
-  if (paddingBytes > 0) {
-    const padBuf = new Uint8Array(paddingBytes);
+  if (prefixJitterLen > 0) {
+    const padBuf = new Uint8Array(prefixJitterLen);
     fillRandomBytes(padBuf);
-    if (paddingBytes >= 16) {
-      salt16.set(padBuf.subarray(paddingBytes - 16));
+    if (prefixJitterLen >= 16) {
+      salt16.set(padBuf.subarray(prefixJitterLen - 16));
     } else {
-      const metaNeed = 16 - paddingBytes;
+      const metaNeed = 16 - prefixJitterLen;
       salt16.set(maskedMeta.subarray(maskedMeta.length - metaNeed), 0);
       salt16.set(padBuf, metaNeed);
     }
@@ -726,13 +744,18 @@ async function executePoolEncryption(params: {
 
   const tailPointer = await encryptTailPointer(metadataOffset, METADATA_SIZE, k4, salt16);
   const tailCopy = new Uint8Array(tailPointer);
-  try {
-    await onChunkOutput(tailCopy);
-  } finally {
-    maskedMeta.fill(0);
-    tailPointer.fill(0);
-    salt16.fill(0);
+  await onChunkOutput(tailCopy);
+
+  if (suffixJitterLen > 0) {
+    const suffixBuf = new Uint8Array(suffixJitterLen);
+    fillRandomBytes(suffixBuf);
+    await onChunkOutput(suffixBuf);
+    suffixBuf.fill(0);
   }
+
+  maskedMeta.fill(0);
+  tailPointer.fill(0);
+  salt16.fill(0);
 
   const totalTimeMs = performance.now() - startTime;
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);
@@ -774,34 +797,76 @@ async function executePoolDecryption(params: {
   k1: Uint8Array;
   k2: Uint8Array;
   k4: Uint8Array;
+  outputFileName?: string;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
   signal?: AbortSignal;
 }): Promise<WorkerSuccessMessage> {
-  const { file, workers, k1, k2, k4, onStart, onProgress, onChunkOutput, signal } = params;
-  const containerSize = file.size;
+  const { file, workers, k1, k2, k4, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
+  const fileSize = file.size;
 
-  if (containerSize < METADATA_SIZE + POINTER_BLOCK_SIZE) {
+  // 1. Detect RIFF WAVE Carrier Polyglot header if present
+  const probeHeaderSlice = file.slice(0, Math.min(256, fileSize));
+  const probeHeaderBytes = new Uint8Array(await probeHeaderSlice.arrayBuffer());
+  const carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
+  const payloadStartOffset = carrierInfo.isCarrier ? carrierInfo.payloadOffset : 0;
+  const effectiveContainerSize = fileSize - payloadStartOffset;
+
+  if (effectiveContainerSize < METADATA_SIZE + POINTER_BLOCK_SIZE) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
-  // 1. Decrypt tail pointer
-  const tailSlice = file.slice(containerSize - POINTER_BLOCK_SIZE, containerSize);
-  const tailBuffer = await tailSlice.arrayBuffer();
-  const tailBytes = new Uint8Array(tailBuffer);
+  // 2. Decrypt pointer (Attempt A: 2X Blind KDF offset; Attempt B: Legacy/Standard EOF-32 fallback)
+  const delta = deriveBlindPointerDelta(k4, BLIND_MAX_DELTA);
+  let metadataOffset = -1;
+  let metadataLength = 0;
+  let pointerFound = false;
 
-  const saltSlice = file.slice(containerSize - POINTER_BLOCK_SIZE - 16, containerSize - POINTER_BLOCK_SIZE);
-  const saltBuffer = await saltSlice.arrayBuffer();
-  const salt16 = new Uint8Array(saltBuffer);
+  if (delta > 0 && effectiveContainerSize >= POINTER_BLOCK_SIZE + delta + 16) {
+    try {
+      const blindPos = fileSize - POINTER_BLOCK_SIZE - delta;
+      const blindTailSlice = file.slice(blindPos, blindPos + POINTER_BLOCK_SIZE);
+      const blindTailBytes = new Uint8Array(await blindTailSlice.arrayBuffer());
 
-  const { offset, length } = await decryptTailPointer(tailBytes, k4, salt16);
-  if (offset < 0 || length !== METADATA_SIZE || offset + length + POINTER_BLOCK_SIZE > containerSize) {
+      const blindSaltSlice = file.slice(blindPos - 16, blindPos);
+      const blindSaltBytes = new Uint8Array(await blindSaltSlice.arrayBuffer());
+
+      const res = await decryptTailPointer(blindTailBytes, k4, blindSaltBytes);
+      metadataOffset = res.offset;
+      metadataLength = res.length;
+      pointerFound = true;
+    } catch {
+      // Blind attempt did not match (e.g. legacy container), proceed to legacy attempt
+    }
+  }
+
+  if (!pointerFound) {
+    const tailSlice = file.slice(fileSize - POINTER_BLOCK_SIZE, fileSize);
+    const tailBytes = new Uint8Array(await tailSlice.arrayBuffer());
+
+    const saltSlice = file.slice(fileSize - POINTER_BLOCK_SIZE - 16, fileSize - POINTER_BLOCK_SIZE);
+    const saltBytes = new Uint8Array(await saltSlice.arrayBuffer());
+
+    const res = await decryptTailPointer(tailBytes, k4, saltBytes);
+    metadataOffset = res.offset;
+    metadataLength = res.length;
+    pointerFound = true;
+  }
+
+  if (
+    metadataOffset < 0 ||
+    metadataLength !== METADATA_SIZE ||
+    metadataOffset + metadataLength + POINTER_BLOCK_SIZE > effectiveContainerSize
+  ) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
-  // 2. Decode & unmask metadata
-  const metaSlice = file.slice(offset, offset + length);
+  // 3. Decode & unmask metadata (located at payloadStartOffset + metadataOffset)
+  const metaSlice = file.slice(
+    payloadStartOffset + metadataOffset,
+    payloadStartOffset + metadataOffset + metadataLength
+  );
   const metaBuffer = await metaSlice.arrayBuffer();
   const rawMetaBytes = new Uint8Array(metaBuffer);
 
@@ -821,7 +886,7 @@ async function executePoolDecryption(params: {
 
   const { originalSize, chunkCount, nonceThreefish, nonceSerpent, nonceChaCha20, nonceAes256 } = metadata;
 
-  if (chunkCount * ENCRYPTED_CHUNK_SIZE !== offset) {
+  if (chunkCount * ENCRYPTED_CHUNK_SIZE !== metadataOffset) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
   if (originalSize < 0 || originalSize > chunkCount * CHUNK_SIZE || (chunkCount > 1 && originalSize <= (chunkCount - 1) * CHUNK_SIZE)) {
@@ -920,7 +985,7 @@ async function executePoolDecryption(params: {
   const slicePrefetchMap = new Map<number, Promise<ArrayBuffer>>();
   const getEncChunkSlice = (chunkIdx: number): Promise<ArrayBuffer> => {
     if (!slicePrefetchMap.has(chunkIdx)) {
-      const start = chunkIdx * ENCRYPTED_CHUNK_SIZE;
+      const start = payloadStartOffset + chunkIdx * ENCRYPTED_CHUNK_SIZE;
       const end = start + ENCRYPTED_CHUNK_SIZE;
       slicePrefetchMap.set(chunkIdx, file.slice(start, end).arrayBuffer());
     }
@@ -1087,16 +1152,16 @@ async function executePoolDecryption(params: {
   const totalTimeMs = performance.now() - startTime;
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);
 
-  const strippedName = file.name.replace(/\.fortknox$/i, '');
-  const restoredName = strippedName !== file.name && strippedName.length > 0
+  const strippedName = file.name.replace(/\.(fortknox|dat|wav|bin|iso)$/i, '');
+  const restoredName = outputFileName || (strippedName !== file.name && strippedName.length > 0
     ? strippedName
-    : `decrypted_${file.name.length > 0 ? file.name : 'file'}`;
+    : `decrypted_${file.name.length > 0 ? file.name : 'file'}`);
 
   return {
     type: 'SUCCESS',
     mode: 'DECRYPT',
     fileName: restoredName,
-    originalSize: containerSize,
+    originalSize: fileSize,
     finalSize: originalSize,
     totalTimeMs: Math.round(totalTimeMs),
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),

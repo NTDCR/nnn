@@ -7,6 +7,7 @@
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
+import { hmac } from '@noble/hashes/hmac.js';
 import { chacha20 } from '@noble/ciphers/chacha.js';
 import { gcm } from '@noble/ciphers/aes.js';
 import { ContainerMetadata } from '../types/crypto.ts';
@@ -397,4 +398,94 @@ export async function decryptTailPointer(
   } finally {
     pointerNonce.fill(0);
   }
+}
+
+export const BLIND_MAX_DELTA = 16384; // 16 KB maximum blind pointer offset window
+
+/**
+ * Derives a blind pointer offset delta from Key 4 using HMAC-SHA256.
+ * The pointer is placed at `containerEnd - 32 - delta`, surrounded by CSPRNG jitter noise,
+ * completely eliminating any fixed pointer location at EOF - 32.
+ */
+export function deriveBlindPointerDelta(key4: Uint8Array, maxDelta: number = BLIND_MAX_DELTA): number {
+  if (key4.length !== 32) {
+    throw new Error('Blind pointer derivation requires strictly a 32-byte Key 4.');
+  }
+  if (maxDelta <= 0) return 0;
+  const label = new TextEncoder().encode('FORTKNOX_BLIND_POINTER_DELTA_V2');
+  const h = hmac(sha256, key4, label);
+  const view = new DataView(h.buffer, h.byteOffset, h.byteLength);
+  const rawNum = view.getUint32(0, true);
+  return rawNum % (maxDelta + 1);
+}
+
+/**
+ * Generates a valid RIFF WAVE (.wav) carrier header containing 1 second of silent PCM audio (44.1 kHz, 16-bit mono)
+ * followed by a standard RIFF "JUNK" chunk header to encapsulate the encrypted container payload.
+ * When opened in VLC, Windows Media Player, QuickTime, or Audacity, it plays valid audio.
+ * Forensic tools (file, mediainfo, exiftool) identify it as compliant WAVE audio.
+ */
+export function createWavCarrierHeader(payloadLength: number): Uint8Array {
+  const pcmAudioBytes = 44100 * 2; // 1 second of 16-bit mono silence (88,200 bytes)
+  const junkChunkHeaderBytes = 8; // "JUNK" (4B) + uint32 length (4B)
+  const totalRiffSize = 4 + (8 + 16) + (8 + pcmAudioBytes) + (junkChunkHeaderBytes + payloadLength);
+
+  const header = new Uint8Array(44 + pcmAudioBytes + junkChunkHeaderBytes);
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+
+  // 1. "RIFF" chunk descriptor
+  header.set([0x52, 0x49, 0x46, 0x46], 0); // "RIFF"
+  view.setUint32(4, totalRiffSize, true);
+  header.set([0x57, 0x41, 0x56, 0x45], 8); // "WAVE"
+
+  // 2. "fmt " sub-chunk
+  header.set([0x66, 0x6d, 0x74, 0x20], 12); // "fmt "
+  view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
+  view.setUint16(20, 1, true);  // AudioFormat (1 = PCM)
+  view.setUint16(22, 1, true);  // NumChannels (1 = Mono)
+  view.setUint32(24, 44100, true); // SampleRate (44.1 kHz)
+  view.setUint32(28, 88200, true); // ByteRate (44100 * 1 * 2)
+  view.setUint16(32, 2, true);  // BlockAlign (1 * 16/8)
+  view.setUint16(34, 16, true); // BitsPerSample (16 bits)
+
+  // 3. "data" sub-chunk (88,200 bytes of silence)
+  header.set([0x64, 0x61, 0x74, 0x61], 36); // "data"
+  view.setUint32(40, pcmAudioBytes, true);
+
+  // 4. "JUNK" sub-chunk header wrapping the cascade container
+  const junkOffset = 44 + pcmAudioBytes;
+  header.set([0x4a, 0x55, 0x4e, 0x4b], junkOffset); // "JUNK"
+  view.setUint32(junkOffset + 4, payloadLength, true);
+
+  return header;
+}
+
+/**
+ * Detects whether an input file is a RIFF WAVE polyglot carrier,
+ * and if so, returns the exact byte offset where the encrypted container payload begins.
+ */
+export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): { isCarrier: boolean; payloadOffset: number } {
+  if (fileStartBytes.length < 44) return { isCarrier: false, payloadOffset: 0 };
+
+  const isRiff = fileStartBytes[0] === 0x52 && fileStartBytes[1] === 0x49 && fileStartBytes[2] === 0x46 && fileStartBytes[3] === 0x46;
+  const isWave = fileStartBytes[8] === 0x57 && fileStartBytes[9] === 0x41 && fileStartBytes[10] === 0x56 && fileStartBytes[11] === 0x45;
+  if (!isRiff || !isWave) return { isCarrier: false, payloadOffset: 0 };
+
+  // Parse RIFF chunks sequentially from header DataView
+  let pos = 12;
+  const view = new DataView(fileStartBytes.buffer, fileStartBytes.byteOffset, fileStartBytes.byteLength);
+  while (pos + 8 <= fileStartBytes.length) {
+    const chunkId = String.fromCharCode(fileStartBytes[pos], fileStartBytes[pos+1], fileStartBytes[pos+2], fileStartBytes[pos+3]);
+    const chunkSize = view.getUint32(pos + 4, true);
+    if (chunkId === 'JUNK' || chunkId === 'PAD ') {
+      return { isCarrier: true, payloadOffset: pos + 8 };
+    }
+    if (chunkId === 'data') {
+      // JUNK chunk encapsulates cascade container immediately succeeding the PCM audio stream
+      const junkPos = pos + 8 + chunkSize;
+      return { isCarrier: true, payloadOffset: junkPos + 8 };
+    }
+    pos += 8 + chunkSize;
+  }
+  return { isCarrier: false, payloadOffset: 0 };
 }
