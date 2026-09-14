@@ -23,6 +23,7 @@ import {
   createPngCarrierHeader,
   createJpgCarrierHeader,
   createIsoCarrierHeader,
+  createMp4CarrierHeader,
   detectCarrierPayloadOffset,
 } from '../crypto/format.ts';
 import { hmac } from '@noble/hashes/hmac.js';
@@ -443,6 +444,7 @@ async function executePoolEncryption(params: {
   const isPngCarrier = Boolean(outputFileName && /\.png$/i.test(outputFileName));
   const isJpgCarrier = Boolean(outputFileName && /\.(jpe?g)$/i.test(outputFileName));
   const isIsoCarrier = Boolean(outputFileName && /\.iso$/i.test(outputFileName));
+  const isMp4Carrier = Boolean(outputFileName && /\.mp4$/i.test(outputFileName));
   const blindDelta = deriveBlindPointerDelta(k4, BLIND_MAX_DELTA);
 
   // Pre-metadata jitter: 1 KB to 16 KB CSPRNG noise to obliterate fixed chunk-to-metadata boundary
@@ -474,6 +476,8 @@ async function executePoolEncryption(params: {
     carrierHeader = createJpgCarrierHeader({ includeExif: true });
   } else if (isIsoCarrier) {
     carrierHeader = createIsoCarrierHeader(totalContainerBytes);
+  } else if (isMp4Carrier) {
+    carrierHeader = createMp4CarrierHeader(totalContainerBytes);
   }
   const totalBytes = (carrierHeader ? carrierHeader.length : 0) + totalContainerBytes;
   onStart?.(chunkCount, totalBytes);

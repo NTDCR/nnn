@@ -34,7 +34,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
   const [streamedToDownloads, setStreamedToDownloads] = useState<boolean>(false);
   const [coreMode, setCoreMode] = useState<'auto' | 'webgpu' | 2 | 4 | 6 | 8>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
-      const saved = localStorage.getItem('fortknox_core_mode');
+      const saved = localStorage.getItem('sys_io_core_mode') || localStorage.getItem('fortknox_core_mode');
       if (saved === 'webgpu') return 'webgpu';
       if (saved === '2') return 2;
       if (saved === '4') return 4;
@@ -44,13 +44,28 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     return 'auto';
   });
 
-
   const [stealthExtension, setStealthExtension] = useState<string>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
-      return localStorage.getItem('fortknox_stealth_ext') || '.dat';
+      return localStorage.getItem('sys_io_format_ext') || localStorage.getItem('fortknox_stealth_ext') || '.dat';
     }
     return '.dat'; // Default stealth extension
   });
+
+  // Anti-Forensics: actively scrub legacy identifiable keys from browser LevelDB storage
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const toScrub: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('fortknox_')) toScrub.push(k);
+        }
+        toScrub.forEach((k) => localStorage.removeItem(k));
+      }
+    } catch {
+      // Ignore
+    }
+  }, []);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const writableStreamRef = useRef<FileSystemWritableFileStream | null>(null);
@@ -257,7 +272,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     if (action === 'ENCRYPT') {
       targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : `${safeRawName}.dat`;
     } else {
-      const stripped = safeRawName.replace(/\.(fortknox|dat|wav|png|jpe?g|bin|iso)$/i, '');
+      const stripped = safeRawName.replace(/\.(fortknox|dat|wav|png|jpe?g|bin|iso|mp4)$/i, '');
       if (stripped.length > 0 && stripped !== safeRawName) {
         targetFileName = stripped;
       } else {
@@ -544,7 +559,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
                 setCoreMode(nextMode);
                 try {
                   if (typeof window !== 'undefined' && window.localStorage) {
-                    localStorage.setItem('fortknox_core_mode', String(nextMode));
+                    localStorage.setItem('sys_io_core_mode', String(nextMode));
                   }
                 } catch {
                   // Ignore quota or security restrictions in private browsing
@@ -615,7 +630,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
                 setStealthExtension(ext);
                 try {
                   if (typeof window !== 'undefined' && window.localStorage) {
-                    localStorage.setItem('fortknox_stealth_ext', ext);
+                    localStorage.setItem('sys_io_format_ext', ext);
                   }
                 } catch {
                   // Ignore
@@ -627,6 +642,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               <option value=".dat" className="bg-slate-900 text-slate-200">.dat (Raw Binary Data)</option>
               <option value=".png" className="bg-slate-900 text-slate-200">.png (Valid PNG Image Polyglot)</option>
               <option value=".jpg" className="bg-slate-900 text-slate-200">.jpg (Valid JPEG Image Polyglot)</option>
+              <option value=".mp4" className="bg-slate-900 text-slate-200">.mp4 (MP4 Video Polyglot - Cloud &amp; Mobile)</option>
               <option value=".wav" className="bg-slate-900 text-slate-200">.wav (Playable Audio Polyglot)</option>
               <option value=".bin" className="bg-slate-900 text-slate-200">.bin (Memory Image)</option>
               <option value=".iso" className="bg-slate-900 text-slate-200">.iso (ISO-9660 Disc Polyglot &gt;1GB)</option>
@@ -638,6 +654,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               ? 'PNG Image Polyglot Active • Displays in Photo Viewers'
               : stealthExtension === '.jpg'
               ? 'JPEG Photo Polyglot Active • Displays in Photo Viewers'
+              : stealthExtension === '.mp4'
+              ? 'MP4 Video Polyglot Active • Displays in Media Players'
               : stealthExtension === '.wav'
               ? 'Audio Polyglot Active • Plays in Media Players'
               : stealthExtension === '.iso'

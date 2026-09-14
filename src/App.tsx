@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { KeyManager } from './components/KeyManager.tsx';
 import { FileProcessor } from './components/FileProcessor.tsx';
 import { VerificationPanel } from './components/VerificationPanel.tsx';
@@ -15,6 +15,8 @@ import {
   Sparkles,
   Terminal,
   ExternalLink,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 export default function App() {
@@ -29,6 +31,26 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'processor' | 'verification'>('processor');
   const [isSpecModalOpen, setIsSpecModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCloaked, setIsCloaked] = useState(false);
+
+  // Anti-Forensics: Emergency Stealth Cloak Mode (Esc / Alt+C)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || (e.altKey && (e.key === 'c' || e.key === 'C'))) {
+        setIsCloaked((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (isCloaked) {
+      document.title = 'Storage Diagnostic & Stream Verifier';
+    } else {
+      document.title = 'Fort-Knox: Cascaded Post-Quantum Cipher & Anti-Forensics';
+    }
+  }, [isCloaked]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
@@ -36,23 +58,48 @@ export default function App() {
       <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md pt-[env(safe-area-inset-top)]">
         <div className="mx-auto max-w-7xl px-3 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/20 text-white">
+            <div className={`flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-xl shadow-md text-white ${
+              isCloaked
+                ? 'bg-gradient-to-br from-emerald-600 to-teal-700 shadow-emerald-500/20'
+                : 'bg-gradient-to-br from-indigo-500 to-purple-600 shadow-indigo-500/20'
+            }`}>
               <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div className="truncate">
               <div className="flex items-center gap-1.5">
-                <span className="text-sm sm:text-base font-bold tracking-tight text-white">Fort-Knox</span>
-                <span className="rounded-md bg-indigo-950/80 px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold text-indigo-300 border border-indigo-800/50">
-                  v1.0 PWA
+                <span className="text-sm sm:text-base font-bold tracking-tight text-white">
+                  {isCloaked ? 'StorageDiag' : 'Fort-Knox'}
+                </span>
+                <span className={`rounded-md px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold border ${
+                  isCloaked
+                    ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/50'
+                    : 'bg-indigo-950/80 text-indigo-300 border-indigo-800/50'
+                }`}>
+                  {isCloaked ? 'v2.4 Diag' : 'v1.0 PWA'}
                 </span>
               </div>
               <p className="text-[10px] sm:text-[11px] text-slate-400 hidden sm:block truncate">
-                4-Layer Cascade File Encryption • Zero-RAM Streaming
+                {isCloaked
+                  ? 'Storage Diagnostics & Stream Integrity Verifier'
+                  : '4-Layer Cascade File Encryption • Zero-RAM Streaming'}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              id="toggle-stealth-cloak-btn"
+              onClick={() => setIsCloaked((c) => !c)}
+              title={isCloaked ? 'Disable Cloak Mode (Esc)' : 'Emergency Stealth Cloak Mode (Esc / Alt+C)'}
+              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border text-xs font-medium transition cursor-pointer ${
+                isCloaked
+                  ? 'border-emerald-600/70 bg-emerald-950/60 text-emerald-300'
+                  : 'border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {isCloaked ? <EyeOff className="w-3.5 h-3.5 text-emerald-400" /> : <Eye className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{isCloaked ? 'Cloaked' : 'Cloak (Esc)'}</span>
+            </button>
             <button
               id="open-specs-nav-btn"
               onClick={() => setIsSpecModalOpen(true)}
@@ -77,9 +124,15 @@ export default function App() {
               <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </div>
             <div className="min-w-0">
-              <strong className="text-white block font-semibold text-[11px] sm:text-xs truncate">1792-bit Cascade</strong>
-              <span className="text-slate-400 font-mono text-[9px] sm:text-[11px] hidden sm:block truncate">Threefish → Serpent → ChaCha → AES</span>
-              <span className="text-slate-400 font-mono text-[9px] sm:hidden">4 Layers</span>
+              <strong className="text-white block font-semibold text-[11px] sm:text-xs truncate">
+                {isCloaked ? 'Block Matrix' : '1792-bit Cascade'}
+              </strong>
+              <span className="text-slate-400 font-mono text-[9px] sm:text-[11px] hidden sm:block truncate">
+                {isCloaked ? 'Block-4 Vector Stream Pipeline' : 'Threefish → Serpent → ChaCha → AES'}
+              </span>
+              <span className="text-slate-400 font-mono text-[9px] sm:hidden">
+                {isCloaked ? 'Pipeline' : '4 Layers'}
+              </span>
             </div>
           </div>
 
@@ -88,9 +141,15 @@ export default function App() {
               <Cpu className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </div>
             <div className="min-w-0">
-              <strong className="text-white block font-semibold text-[11px] sm:text-xs truncate">Zero-RAM Stream</strong>
-              <span className="text-slate-400 font-mono text-[9px] sm:text-[11px] hidden sm:block truncate">1 MB chunks • 2–3 MB ceiling</span>
-              <span className="text-slate-400 font-mono text-[9px] sm:hidden">No OOM</span>
+              <strong className="text-white block font-semibold text-[11px] sm:text-xs truncate">
+                {isCloaked ? 'Stream Buffer' : 'Zero-RAM Stream'}
+              </strong>
+              <span className="text-slate-400 font-mono text-[9px] sm:text-[11px] hidden sm:block truncate">
+                {isCloaked ? '1 MB I/O chunks • Sub-5MB ceiling' : '1 MB chunks • 2–3 MB ceiling'}
+              </span>
+              <span className="text-slate-400 font-mono text-[9px] sm:hidden">
+                {isCloaked ? 'Sub-5MB' : 'No OOM'}
+              </span>
             </div>
           </div>
 
@@ -99,9 +158,15 @@ export default function App() {
               <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </div>
             <div className="min-w-0">
-              <strong className="text-white block font-semibold text-[11px] sm:text-xs truncate">Antiforensic</strong>
-              <span className="text-slate-400 font-mono text-[9px] sm:text-[11px] hidden sm:block truncate">Zero magic • Masked metadata</span>
-              <span className="text-slate-400 font-mono text-[9px] sm:hidden">Masked</span>
+              <strong className="text-white block font-semibold text-[11px] sm:text-xs truncate">
+                {isCloaked ? 'Parity Verify' : 'Antiforensic'}
+              </strong>
+              <span className="text-slate-400 font-mono text-[9px] sm:text-[11px] hidden sm:block truncate">
+                {isCloaked ? 'Stream Parity • Masked Diagnostics' : 'Zero magic • Masked metadata'}
+              </span>
+              <span className="text-slate-400 font-mono text-[9px] sm:hidden">
+                {isCloaked ? 'Parity' : 'Masked'}
+              </span>
             </div>
           </div>
         </div>
@@ -162,8 +227,12 @@ export default function App() {
       <footer className="mt-auto border-t border-slate-800/80 bg-slate-950 py-6 text-xs text-slate-500">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-indigo-500" />
-            <span>Fort-Knox Cryptographic Educational & Security Research Platform</span>
+            <Shield className={`w-4 h-4 ${isCloaked ? 'text-emerald-500' : 'text-indigo-500'}`} />
+            <span>
+              {isCloaked
+                ? 'Storage Diagnostic & Stream Verification Platform'
+                : 'Fort-Knox Cryptographic Educational & Security Research Platform'}
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-[11px] font-mono">

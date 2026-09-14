@@ -92,16 +92,29 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     const hasKeys = !!(keys.layer1ThreefishHex || keys.layer2SerpentHex || keys.layer3ChaChaHex || keys.layer4AesHex);
     if (!hasKeys || disabled) return;
 
+    const scrubKeys = () => {
+      onChangeKeys({
+        layer1ThreefishHex: '',
+        layer2SerpentHex: '',
+        layer3ChaChaHex: '',
+        layer4AesHex: '',
+      });
+      // Anti-Forensics: allocate & zero ephemeral buffers to prompt V8 heap scavenger compaction
+      try {
+        for (let i = 0; i < 8; i++) {
+          const buf = new Uint8Array(512 * 1024);
+          buf.fill(0);
+        }
+      } catch {
+        // Ignore
+      }
+    };
+
     let timeoutId: NodeJS.Timeout | number;
     const resetTimer = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        onChangeKeys({
-          layer1ThreefishHex: '',
-          layer2SerpentHex: '',
-          layer3ChaChaHex: '',
-          layer4AesHex: '',
-        });
+        scrubKeys();
       }, 5 * 60 * 1000); // 5 minutes
     };
 
@@ -114,12 +127,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
       if (document.visibilityState === 'hidden') {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
-          onChangeKeys({
-            layer1ThreefishHex: '',
-            layer2SerpentHex: '',
-            layer3ChaChaHex: '',
-            layer4AesHex: '',
-          });
+          scrubKeys();
         }, 60 * 1000); // 1 minute in background
       } else {
         resetTimer();
@@ -142,6 +150,14 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
       layer3ChaChaHex: '',
       layer4AesHex: '',
     });
+    try {
+      for (let i = 0; i < 8; i++) {
+        const buf = new Uint8Array(512 * 1024);
+        buf.fill(0);
+      }
+    } catch {
+      // Ignore
+    }
   };
 
   const handleGenerateKey = (keyName: keyof CascadeKeys) => {
