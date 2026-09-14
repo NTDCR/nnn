@@ -466,7 +466,7 @@ async function executePoolEncryption(params: {
   if (isWavCarrier) {
     carrierHeader = createWavCarrierHeader(totalContainerBytes);
   } else if (isPngCarrier) {
-    const dim = totalContainerBytes > 5 * 1024 * 1024 ? 32 : 16;
+    const dim = totalContainerBytes > 50 * 1024 * 1024 ? 64 : (totalContainerBytes > 5 * 1024 * 1024 ? 32 : 16);
     carrierHeader = createPngCarrierHeader(totalContainerBytes, {
       width: dim,
       height: dim,

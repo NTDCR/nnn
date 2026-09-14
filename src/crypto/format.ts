@@ -440,6 +440,7 @@ export function deriveBlindPointerDelta(key4: Uint8Array, maxDelta: number = BLI
  */
 export interface WavCarrierOptions {
   audibleTone?: boolean;
+  legacyFixed?: boolean;
 }
 
 export function createWavCarrierHeader(payloadLength: number, options?: WavCarrierOptions): Uint8Array {
@@ -465,9 +466,12 @@ export function createWavCarrierHeader(payloadLength: number, options?: WavCarri
   view.setUint16(32, 2, true);  // BlockAlign (1 * 16/8)
   view.setUint16(34, 16, true); // BitsPerSample (16 bits)
 
-  // 3. "data" sub-chunk (88,200 bytes of authentic acoustic dithering)
+  // 3. "data" sub-chunk (dynamic proportional duration matching file size)
   header.set([0x64, 0x61, 0x74, 0x61], 36); // "data"
-  view.setUint32(40, pcmAudioBytes, true);
+  const totalDataBytes = options?.legacyFixed
+    ? pcmAudioBytes
+    : Math.min(0xFFFFFFFF - 44, pcmAudioBytes + junkChunkHeaderBytes + payloadLength);
+  view.setUint32(40, totalDataBytes, true);
 
   const ditherRand = new Uint8Array(44100);
   fillRandomBytes(ditherRand);
@@ -884,13 +888,16 @@ const MP4_PREVIEW_BASE: Uint8Array = decodeBase64(MP4_PREVIEW_BASE_B64);
 
 export interface Mp4CarrierOptions {
   legacySynthetic?: boolean;
+  fixedDuration?: boolean;
 }
 
 /**
  * Generates an authentic ISO Base Media File Format (ISO/IEC 14496-12 / MP4) video carrier header.
  * - Playable Polyglot mode (Default): Embeds an authentic 1,493-byte ISO-BMFF media clip containing
  *   real media frames and track metadata in mdat #1 indexed by moov, followed by mdat #2 box header
- *   wrapping the cascade container. Plays natively in VLC, Windows Media Player, Movies & TV, Chrome, QuickTime.
+ *   wrapping the cascade container. Duration in mvhd, tkhd, elst, and mdhd dynamically scales
+ *   with payloadLength at nominal 2 Mbps, mathematically matching the physical file size and seek bar.
+ *   Plays natively in VLC, Windows Media Player, Movies & TV, Chrome, QuickTime.
  * - Legacy Synthetic mode (legacySynthetic: true): Generates the 579-byte synthetic ISO-BMFF header for backward compatibility.
  */
 export function createMp4CarrierHeader(payloadLength: number, options?: Mp4CarrierOptions): Uint8Array {
@@ -1065,9 +1072,26 @@ export function createMp4CarrierHeader(payloadLength: number, options?: Mp4Carri
     mView.setBigUint64(8, BigInt(payloadLength + 16), false);
   }
 
-  const carrier = new Uint8Array(MP4_PREVIEW_BASE.length + mdatHeader.length);
-  carrier.set(MP4_PREVIEW_BASE, 0);
-  carrier.set(mdatHeader, MP4_PREVIEW_BASE.length);
+  // Clone base template and patch duration to dynamically match payload file size
+  const base = MP4_PREVIEW_BASE.slice();
+  if (!options?.fixedDuration) {
+    // Nominal HD video bitrate: 2,000,000 bits per sec (250 KB/sec)
+    // Duration T in seconds (clamped to range 3s .. 86,400s [24 hours])
+    const T = Math.max(3, Math.min(86400, Math.round((payloadLength * 8) / 2000000)));
+    const baseView = new DataView(base.buffer, base.byteOffset, base.byteLength);
+    // mvhd duration (offset 819, timescale 1000)
+    baseView.setUint32(819, T * 1000, false);
+    // tkhd duration (offset 939, timescale 1000)
+    baseView.setUint32(939, T * 1000, false);
+    // elst duration (offset 1027, timescale 1000)
+    baseView.setUint32(1027, T * 1000, false);
+    // mdhd duration (offset 1071, timescale 44100)
+    baseView.setUint32(1071, Math.min(0xFFFFFFFF, T * 44100), false);
+  }
+
+  const carrier = new Uint8Array(base.length + mdatHeader.length);
+  carrier.set(base, 0);
+  carrier.set(mdatHeader, base.length);
   return carrier;
 }
 
@@ -1087,6 +1111,17 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
     fileStartBytes[0] === 0x52 && fileStartBytes[1] === 0x49 && fileStartBytes[2] === 0x46 && fileStartBytes[3] === 0x46 &&
     fileStartBytes[8] === 0x57 && fileStartBytes[9] === 0x41 && fileStartBytes[10] === 0x56 && fileStartBytes[11] === 0x45
   ) {
+    // Fast O(1) detection for FortKnox standard audible WAV carrier (JUNK chunk at offset 88244)
+    if (
+      fileStartBytes.length >= 88252 &&
+      fileStartBytes[88244] === 0x4a && // 'J'
+      fileStartBytes[88245] === 0x55 && // 'U'
+      fileStartBytes[88246] === 0x4e && // 'N'
+      fileStartBytes[88247] === 0x4b    // 'K'
+    ) {
+      return { isCarrier: true, payloadOffset: 88252, carrierType: 'wav' };
+    }
+
     let pos = 12;
     const view = new DataView(fileStartBytes.buffer, fileStartBytes.byteOffset, fileStartBytes.byteLength);
     while (pos + 8 <= fileStartBytes.length) {
@@ -1096,8 +1131,15 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
         return { isCarrier: true, payloadOffset: pos + 8, carrierType: 'wav' };
       }
       if (chunkId === 'data') {
+        // If data chunk size is 88,200 (1 second PCM) or if only a short probe buffer was provided (< 88,252 bytes),
+        // the FortKnox container payload begins after the 88,200 PCM bytes + 8-byte JUNK header = offset 88,252
+        if (chunkSize === 88200 || fileStartBytes.length < 88252) {
+          return { isCarrier: true, payloadOffset: 88252, carrierType: 'wav' };
+        }
         const junkPos = pos + 8 + chunkSize;
-        return { isCarrier: true, payloadOffset: junkPos + 8, carrierType: 'wav' };
+        if (junkPos + 8 <= fileStartBytes.length) {
+          return { isCarrier: true, payloadOffset: junkPos + 8, carrierType: 'wav' };
+        }
       }
       pos += 8 + chunkSize;
       if (chunkSize % 2 !== 0) pos++;
