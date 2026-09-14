@@ -31,6 +31,8 @@ export interface ProcessFileOptions {
   file: File | SliceableDataSource;
   keys: CascadeKeys;
   coreConcurrency?: 'auto' | 'webgpu' | 2 | 4 | 6 | 8;
+  antiForensicPadding?: number;
+  outputFileName?: string;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
@@ -362,6 +364,8 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
         k1,
         k2,
         k4,
+        antiForensicPadding: options.antiForensicPadding,
+        outputFileName: options.outputFileName,
         onStart,
         onProgress,
         onChunkOutput,
@@ -403,12 +407,14 @@ async function executePoolEncryption(params: {
   k1: Uint8Array;
   k2: Uint8Array;
   k4: Uint8Array;
+  antiForensicPadding?: number;
+  outputFileName?: string;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
   signal?: AbortSignal;
 }): Promise<WorkerSuccessMessage> {
-  const { file, workers, k1, k2, k4, onStart, onProgress, onChunkOutput, signal } = params;
+  const { file, workers, k1, k2, k4, antiForensicPadding, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
   const originalSize = file.size;
   const chunkCount = Math.max(1, Math.ceil(originalSize / CHUNK_SIZE));
 
@@ -425,7 +431,8 @@ async function executePoolEncryption(params: {
   crypto.getRandomValues(nonceChaCha);
   crypto.getRandomValues(nonceAes);
 
-  const totalBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + METADATA_SIZE + POINTER_BLOCK_SIZE;
+  const paddingBytes = antiForensicPadding && antiForensicPadding > 0 ? Math.floor(antiForensicPadding) : 0;
+  const totalBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + METADATA_SIZE + paddingBytes + POINTER_BLOCK_SIZE;
   onStart?.(chunkCount, totalBytes);
 
   const startTime = performance.now();
@@ -696,18 +703,35 @@ async function executePoolEncryption(params: {
     metadata.fill(0);
   }
 
-  const salt16 = new Uint8Array(maskedMeta.subarray(maskedMeta.length - 16));
   const metadataOffset = chunkCount * ENCRYPTED_CHUNK_SIZE;
-  const tailPointer = await encryptTailPointer(metadataOffset, METADATA_SIZE, k4, salt16);
-
   const metaCopy = new Uint8Array(maskedMeta);
+  await onChunkOutput(metaCopy);
+
+  const salt16 = new Uint8Array(16);
+  if (paddingBytes > 0) {
+    const padBuf = new Uint8Array(paddingBytes);
+    fillRandomBytes(padBuf);
+    if (paddingBytes >= 16) {
+      salt16.set(padBuf.subarray(paddingBytes - 16));
+    } else {
+      const metaNeed = 16 - paddingBytes;
+      salt16.set(maskedMeta.subarray(maskedMeta.length - metaNeed), 0);
+      salt16.set(padBuf, metaNeed);
+    }
+    await onChunkOutput(padBuf);
+    padBuf.fill(0);
+  } else {
+    salt16.set(maskedMeta.subarray(maskedMeta.length - 16));
+  }
+
+  const tailPointer = await encryptTailPointer(metadataOffset, METADATA_SIZE, k4, salt16);
   const tailCopy = new Uint8Array(tailPointer);
   try {
-    await onChunkOutput(metaCopy);
     await onChunkOutput(tailCopy);
   } finally {
     maskedMeta.fill(0);
     tailPointer.fill(0);
+    salt16.fill(0);
   }
 
   const totalTimeMs = performance.now() - startTime;
@@ -716,7 +740,7 @@ async function executePoolEncryption(params: {
   return {
     type: 'SUCCESS',
     mode: 'ENCRYPT',
-    fileName: `${file.name}.fortknox`,
+    fileName: outputFileName || `${file.name}.fortknox`,
     originalSize,
     finalSize: totalBytes,
     totalTimeMs: Math.round(totalTimeMs),
@@ -772,7 +796,7 @@ async function executePoolDecryption(params: {
   const salt16 = new Uint8Array(saltBuffer);
 
   const { offset, length } = await decryptTailPointer(tailBytes, k4, salt16);
-  if (offset < 0 || length !== METADATA_SIZE || offset + length + POINTER_BLOCK_SIZE !== containerSize) {
+  if (offset < 0 || length !== METADATA_SIZE || offset + length + POINTER_BLOCK_SIZE > containerSize) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
 

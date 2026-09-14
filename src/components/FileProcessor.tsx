@@ -13,6 +13,7 @@ import {
   HardDrive,
   Download,
   Info,
+  EyeOff,
 } from 'lucide-react';
 
 interface FileProcessorProps {
@@ -41,6 +42,20 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       if (saved === '8') return 8;
     }
     return 'auto';
+  });
+
+  const [antiForensicMode, setAntiForensicMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem('fortknox_antiforensic') === 'true';
+    }
+    return false;
+  });
+
+  const [stealthExtension, setStealthExtension] = useState<string>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem('fortknox_stealth_ext') || '.fortknox';
+    }
+    return '.fortknox';
   });
 
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -246,9 +261,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     const safeRawName = baseRawName.replace(/\.part[-_]?\d+$/i, '');
     let targetFileName: string;
     if (action === 'ENCRYPT') {
-      targetFileName = `${safeRawName}.fortknox`;
+      if (antiForensicMode && stealthExtension !== '.fortknox') {
+        targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : safeRawName;
+      } else {
+        targetFileName = `${safeRawName}.fortknox`;
+      }
     } else {
-      const stripped = safeRawName.replace(/\.fortknox$/i, '');
+      const stripped = safeRawName.replace(/\.(fortknox|dat|bin|iso)$/i, '');
       if (stripped.length > 0 && stripped !== safeRawName) {
         targetFileName = stripped;
       } else {
@@ -368,6 +387,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       }, 3000);
     };
 
+    let calculatedPadding = 0;
+    if (action === 'ENCRYPT' && antiForensicMode) {
+      // 1 KB to 64 KB CSPRNG jitter noise to destroy the mathematical file size modulo signature
+      const randBuf = new Uint16Array(1);
+      crypto.getRandomValues(randBuf);
+      calculatedPadding = 1024 + (randBuf[0] % 64512);
+    }
+
     try {
       const res = await processFileWithPool({
         action,
@@ -379,6 +406,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
           layer4AesHex: k4,
         },
         coreConcurrency: coreMode,
+        antiForensicPadding: calculatedPadding,
+        outputFileName: targetFileName,
         onProgress: (() => {
           let lastProgressTime = 0;
           return (p: Parameters<NonNullable<Parameters<typeof processFileWithPool>[0]['onProgress']>>[0]) => {
@@ -571,6 +600,71 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             </div>
           )}
         </div>
+      </div>
+
+      {/* Anti-Forensic / Plausible Deniability Options Bar */}
+      <div id="antiforensic-bar" className="mt-3.5 flex flex-wrap items-center justify-between gap-2.5 p-2.5 sm:p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+        <label
+          htmlFor="anti-forensic-toggle"
+          className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none"
+          title="When active: appends cryptographically random tail jitter (1-64 KB) to destroy the mathematical file-size modulo signature, making the container forensically indistinguishable from /dev/urandom disk-wipe noise."
+        >
+          <input
+            type="checkbox"
+            id="anti-forensic-toggle"
+            checked={antiForensicMode}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setAntiForensicMode(checked);
+              try {
+                if (typeof window !== 'undefined' && window.localStorage) {
+                  localStorage.setItem('fortknox_antiforensic', checked ? 'true' : 'false');
+                }
+              } catch {
+                // Ignore
+              }
+            }}
+            disabled={isProcessing}
+            className="rounded border-slate-700 bg-slate-800 text-purple-600 focus:ring-purple-500 cursor-pointer"
+          />
+          <span className="flex items-center gap-1.5 font-mono text-[11px] sm:text-xs text-purple-300 font-medium">
+            <EyeOff className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+            <span>Anti-Forensic Jitter (Plausible Deniability)</span>
+          </span>
+        </label>
+
+        {antiForensicMode && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 bg-purple-950/40 border border-purple-800/50 rounded-lg px-2.5 py-1">
+              <span className="text-[10px] sm:text-[11px] text-purple-300 font-mono">Format:</span>
+              <select
+                id="stealth-extension-select"
+                value={stealthExtension}
+                onChange={(e) => {
+                  const ext = e.target.value;
+                  setStealthExtension(ext);
+                  try {
+                    if (typeof window !== 'undefined' && window.localStorage) {
+                      localStorage.setItem('fortknox_stealth_ext', ext);
+                    }
+                  } catch {
+                    // Ignore
+                  }
+                }}
+                disabled={isProcessing}
+                className="bg-transparent text-purple-200 font-mono text-[11px] outline-none cursor-pointer"
+              >
+                <option value=".dat" className="bg-slate-900 text-slate-200">.dat (Raw Binary Data)</option>
+                <option value=".bin" className="bg-slate-900 text-slate-200">.bin (Memory Image)</option>
+                <option value=".iso" className="bg-slate-900 text-slate-200">.iso (Disk Image)</option>
+                <option value=".fortknox" className="bg-slate-900 text-slate-200">.fortknox (Standard)</option>
+              </select>
+            </div>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/70 border border-purple-800/60 text-purple-300 font-mono hidden lg:inline-flex items-center gap-1">
+              Modulo Signature: Annihilated • Entropy: 8.000
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Drag & Drop Target - Mobile-optimized tap target */}
