@@ -23,6 +23,18 @@ import {
   DEFAULT_INTERLEAVE_DEPTH,
 } from './reedsolomon.ts';
 
+import {
+  TARGET_SHAPED_ENTROPY,
+  THEORETICAL_EXPANSION_RATIO,
+  shapeCiphertext,
+  unshapeCiphertext,
+  calculateShannonMetrics,
+  verifyKraftMcMillan,
+  FIXED_SHAPED_CHUNK_SIZE,
+  shapeChunkFixed,
+  unshapeChunkFixed,
+} from './distributionMatcher.ts';
+
 export {
   protectMetadataBlob,
   healMetadataBlob,
@@ -32,6 +44,15 @@ export {
   decodeInterleaved,
   DEFAULT_RS_PARITY_BYTES,
   DEFAULT_INTERLEAVE_DEPTH,
+  TARGET_SHAPED_ENTROPY,
+  THEORETICAL_EXPANSION_RATIO,
+  shapeCiphertext,
+  unshapeCiphertext,
+  calculateShannonMetrics,
+  verifyKraftMcMillan,
+  FIXED_SHAPED_CHUNK_SIZE,
+  shapeChunkFixed,
+  unshapeChunkFixed,
 };
 
 const METADATA_MAGIC = 0x464B4E31; // "FKN1"
@@ -199,6 +220,12 @@ export function encodeMetadataBlob(meta: Partial<ContainerMetadata> & {
     view.setBigUint64(144, BigInt(meta.lastModified), true);
   }
 
+  if (meta.entropyShaped) {
+    view.setUint32(152, 0x53485031, true); // "SHP1" marker
+  } else {
+    view.setUint32(152, 0, true);
+  }
+
   // Industrial Reed-Solomon Forward Error Correction (Critical Metadata Protection)
   // Embeds 64-byte systematic RS parity into bytes 160-223 to protect headers from silent corruption
   protectMetadataBlob(buf);
@@ -269,6 +296,9 @@ export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
     lastModified = Number(rawLastModifiedBig);
   }
 
+  const entropyMarker = view.getUint32(152, true);
+  const entropyShaped = entropyMarker === 0x53485031;
+
   return {
     magic,
     version,
@@ -282,6 +312,7 @@ export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
     hmacIntegrity,
     orderConfirm,
     lastModified,
+    entropyShaped,
   };
 }
 

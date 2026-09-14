@@ -23,6 +23,11 @@ import {
   createIsoCarrierHeader,
   createMp4CarrierHeader,
   detectCarrierPayloadOffset,
+  shapeCiphertext,
+  unshapeCiphertext,
+  FIXED_SHAPED_CHUNK_SIZE,
+  shapeChunkFixed,
+  unshapeChunkFixed,
 } from '../crypto/format.ts';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -39,6 +44,7 @@ export interface ProcessFileOptions {
   coreConcurrency?: 'auto' | 'webgpu' | 2 | 4 | 6 | 8;
   antiForensicPadding?: number;
   outputFileName?: string;
+  entropyShaping?: boolean;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
@@ -372,6 +378,7 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
         k4,
         antiForensicPadding: options.antiForensicPadding,
         outputFileName: options.outputFileName,
+        entropyShaping: options.entropyShaping,
         onStart,
         onProgress,
         onChunkOutput,
@@ -416,12 +423,13 @@ async function executePoolEncryption(params: {
   k4: Uint8Array;
   antiForensicPadding?: number;
   outputFileName?: string;
+  entropyShaping?: boolean;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
   signal?: AbortSignal;
 }): Promise<WorkerSuccessMessage> {
-  const { file, workers, k1, k2, k4, antiForensicPadding, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
+  const { file, workers, k1, k2, k4, antiForensicPadding, outputFileName, entropyShaping, onStart, onProgress, onChunkOutput, signal } = params;
   const originalSize = file.size;
   const chunkCount = Math.max(1, Math.ceil(originalSize / CHUNK_SIZE));
 
@@ -456,7 +464,8 @@ async function executePoolEncryption(params: {
     prefixJitterLen = 1024 + (randBuf[0] % 64512);
   }
   const suffixJitterLen = blindDelta;
-  const totalContainerBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + preMetaJitterLen + METADATA_SIZE + prefixJitterLen + POINTER_BLOCK_SIZE + suffixJitterLen;
+  const effectiveChunkSize = entropyShaping ? FIXED_SHAPED_CHUNK_SIZE : ENCRYPTED_CHUNK_SIZE;
+  const totalContainerBytes = chunkCount * effectiveChunkSize + preMetaJitterLen + METADATA_SIZE + prefixJitterLen + POINTER_BLOCK_SIZE + suffixJitterLen;
 
   let carrierHeader: Uint8Array | null = null;
   if (isWavCarrier) {
@@ -511,7 +520,12 @@ async function executePoolEncryption(params: {
         if (workerError) throw workerError;
         const chunk = completedChunks.get(nextEmitChunk)!;
         completedChunks.delete(nextEmitChunk);
-        await onChunkOutput(chunk);
+        if (entropyShaping) {
+          const shapedChunk = shapeChunkFixed(chunk);
+          await onChunkOutput(shapedChunk);
+        } else {
+          await onChunkOutput(chunk);
+        }
         nextEmitChunk++;
         notifyDrain();
       }
@@ -733,6 +747,7 @@ async function executePoolEncryption(params: {
     hmacIntegrity,
     orderConfirm: orderHash,
     lastModified: 'lastModified' in file ? file.lastModified : undefined,
+    entropyShaped: Boolean(entropyShaping),
   });
 
   let maskedMeta: Uint8Array;
@@ -742,7 +757,7 @@ async function executePoolEncryption(params: {
     metadata.fill(0);
   }
 
-  const metadataOffset = chunkCount * ENCRYPTED_CHUNK_SIZE + preMetaJitterLen;
+  const metadataOffset = chunkCount * effectiveChunkSize + preMetaJitterLen;
 
   // Stream pre-metadata jitter noise (destroys chunk-to-metadata boundary)
   const preMetaBuf = new Uint8Array(preMetaJitterLen);
@@ -900,7 +915,8 @@ async function executePoolDecryption(params: {
 
   const { originalSize, chunkCount, nonceThreefish, nonceSerpent, nonceChaCha20, nonceAes256 } = metadata;
 
-  if (metadataOffset < chunkCount * ENCRYPTED_CHUNK_SIZE) {
+  const effectiveChunkSize = metadata.entropyShaped ? FIXED_SHAPED_CHUNK_SIZE : ENCRYPTED_CHUNK_SIZE;
+  if (metadataOffset < chunkCount * effectiveChunkSize) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
   if (originalSize < 0 || originalSize > chunkCount * CHUNK_SIZE || (chunkCount > 1 && originalSize <= (chunkCount - 1) * CHUNK_SIZE)) {
@@ -999,9 +1015,20 @@ async function executePoolDecryption(params: {
   const slicePrefetchMap = new Map<number, Promise<ArrayBuffer>>();
   const getEncChunkSlice = (chunkIdx: number): Promise<ArrayBuffer> => {
     if (!slicePrefetchMap.has(chunkIdx)) {
-      const start = payloadStartOffset + chunkIdx * ENCRYPTED_CHUNK_SIZE;
-      const end = start + ENCRYPTED_CHUNK_SIZE;
-      slicePrefetchMap.set(chunkIdx, file.slice(start, end).arrayBuffer());
+      const start = payloadStartOffset + chunkIdx * effectiveChunkSize;
+      const end = start + effectiveChunkSize;
+      if (metadata.entropyShaped) {
+        const p = file.slice(start, end).arrayBuffer().then((buf) => {
+          const slot = new Uint8Array(buf);
+          const unshaped = unshapeChunkFixed(slot, ENCRYPTED_CHUNK_SIZE);
+          const outBuf = new ArrayBuffer(unshaped.length);
+          new Uint8Array(outBuf).set(unshaped);
+          return outBuf;
+        });
+        slicePrefetchMap.set(chunkIdx, p);
+      } else {
+        slicePrefetchMap.set(chunkIdx, file.slice(start, end).arrayBuffer());
+      }
     }
     return slicePrefetchMap.get(chunkIdx)!;
   };

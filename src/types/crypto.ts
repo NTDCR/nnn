@@ -18,6 +18,7 @@ export interface ContainerMetadata {
   hmacIntegrity: Uint8Array; // 32 bytes HMAC-SHA256
   orderConfirm: Uint8Array;  // 32 bytes cascade order verification
   lastModified?: number;     // Original file modification timestamp in milliseconds
+  entropyShaped?: boolean;   // True if payload is shaped with Distribution Matcher (~6.9 b/B)
 }
 
 export interface WorkerProgressMessage {
