@@ -438,7 +438,11 @@ export function deriveBlindPointerDelta(key4: Uint8Array, maxDelta: number = BLI
  * When opened in VLC, Windows Media Player, QuickTime, or Audacity, it plays valid audio without clipping.
  * Synthetic low-level acoustic dithering eliminates the 0.0 entropy step-function in binwalk/cutter visualizers.
  */
-export function createWavCarrierHeader(payloadLength: number): Uint8Array {
+export interface WavCarrierOptions {
+  audibleTone?: boolean;
+}
+
+export function createWavCarrierHeader(payloadLength: number, options?: WavCarrierOptions): Uint8Array {
   const pcmAudioBytes = 44100 * 2; // 1 second of 16-bit mono audio (88,200 bytes)
   const junkChunkHeaderBytes = 8; // "JUNK" (4B) + uint32 length (4B)
   const totalRiffSize = 4 + (8 + 16) + (8 + pcmAudioBytes) + (junkChunkHeaderBytes + payloadLength);
@@ -446,9 +450,9 @@ export function createWavCarrierHeader(payloadLength: number): Uint8Array {
   const header = new Uint8Array(44 + pcmAudioBytes + junkChunkHeaderBytes);
   const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
 
-  // 1. "RIFF" chunk descriptor
+  // 1. "RIFF" chunk descriptor (clamped to 0xFFFFFFFF - 8 to prevent 32-bit overflow on > 4 GB files)
   header.set([0x52, 0x49, 0x46, 0x46], 0); // "RIFF"
-  view.setUint32(4, totalRiffSize, true);
+  view.setUint32(4, Math.min(0xFFFFFFFF - 8, totalRiffSize), true);
   header.set([0x57, 0x41, 0x56, 0x45], 8); // "WAVE"
 
   // 2. "fmt " sub-chunk
@@ -461,28 +465,40 @@ export function createWavCarrierHeader(payloadLength: number): Uint8Array {
   view.setUint16(32, 2, true);  // BlockAlign (1 * 16/8)
   view.setUint16(34, 16, true); // BitsPerSample (16 bits)
 
-  // 3. "data" sub-chunk (88,200 bytes of authentic low-level TPDF acoustic dithering)
+  // 3. "data" sub-chunk (88,200 bytes of authentic acoustic dithering)
   header.set([0x64, 0x61, 0x74, 0x61], 36); // "data"
   view.setUint32(40, pcmAudioBytes, true);
 
-  // Fill PCM data with professional acoustic TPDF dither (+-1 to +-8 LSB at -72 dBFS)
-  // Completely inaudible studio room air when played, but exhibits realistic ~3.5-4.8 bits/byte entropy
-  // Eliminates the sharp 0.0 -> 8.0 entropy step-function alert in binwalk / cutter visualizers
   const ditherRand = new Uint8Array(44100);
   fillRandomBytes(ditherRand);
   const pcmOffset = 44;
-  let walk = 0;
-  for (let i = 0; i < 44100; i++) {
-    const step = (ditherRand[i] & 0x07) - 3;
-    walk = Math.max(-12, Math.min(12, walk + step));
-    view.setInt16(pcmOffset + i * 2, walk, true);
+
+  if (options?.audibleTone) {
+    const TWO_PI = 2 * Math.PI;
+    for (let i = 0; i < 44100; i++) {
+      const t = i / 44100;
+      const env = Math.sin(Math.PI * t);
+      const tone = 0.7 * Math.sin(TWO_PI * 440 * t) + 0.3 * Math.sin(TWO_PI * 880 * t);
+      const signal = Math.round(env * env * 2200 * tone);
+      const dither = (ditherRand[i] & 0x07) - 3;
+      view.setInt16(pcmOffset + i * 2, Math.max(-32767, Math.min(32767, signal + dither)), true);
+    }
+  } else {
+    // Fill PCM data with professional acoustic TPDF dither (+-1 to +-8 LSB at -72 dBFS)
+    // Inaudible studio room air when played, but exhibits realistic ~3.5-4.8 bits/byte entropy
+    let walk = 0;
+    for (let i = 0; i < 44100; i++) {
+      const step = (ditherRand[i] & 0x07) - 3;
+      walk = Math.max(-12, Math.min(12, walk + step));
+      view.setInt16(pcmOffset + i * 2, walk, true);
+    }
   }
   ditherRand.fill(0);
 
   // 4. "JUNK" sub-chunk header wrapping the cascade container
   const junkOffset = 44 + pcmAudioBytes;
   header.set([0x4a, 0x55, 0x4e, 0x4b], junkOffset); // "JUNK"
-  view.setUint32(junkOffset + 4, payloadLength, true);
+  view.setUint32(junkOffset + 4, Math.min(0xFFFFFFFF, payloadLength), true);
 
   return header;
 }
@@ -851,164 +867,208 @@ export function createIsoCarrierHeader(payloadLength: number): Uint8Array {
   return header;
 }
 
+const MP4_PREVIEW_BASE_B64 =
+  'AAAAHGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQAAAAhmcmVlAAAC721kYXQhEAUgpBv/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3pwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcCEQBSCkG//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADengAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAAAsJtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAALwABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAB7HRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAIAAAAAAAAALwAAAAAAAAAAAAAAAQEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAAC8AAAAAAAEAAAAAAWRtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAAKxEAAAIAFXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAAEPbWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAADTc3RibAAAAGdzdHNkAAAAAAAAAAEAAABXbXA0YQAAAAAAAAABAAAAAAAAAAAAAgAQAAAAAKxEAAAAAAAzZXNkcwAAAAADgICAIgACAASAgIAUQBUAAAAAAfQAAAHz+QWAgIACEhAGgICAAQIAAAAYc3R0cwAAAAAAAAABAAAAAgAABAAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAIAAAABAAAAHHN0c3oAAAAAAAAAAAAAAAIAAAFzAAABdAAAABRzdGNvAAAAAAAAAAEAAAAsAAAAYnVkdGEAAABabWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAtaWxzdAAAACWpdG9vAAAAHWRhdGEAAAABAAAAAExhdmY1Ni40MC4xMDE=';
+
+function decodeBase64(b64: string): Uint8Array {
+  if (typeof Buffer !== 'undefined') {
+    return Uint8Array.from(Buffer.from(b64, 'base64'));
+  }
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+const MP4_PREVIEW_BASE: Uint8Array = decodeBase64(MP4_PREVIEW_BASE_B64);
+
+export interface Mp4CarrierOptions {
+  legacySynthetic?: boolean;
+}
+
 /**
  * Generates an authentic ISO Base Media File Format (ISO/IEC 14496-12 / MP4) video carrier header.
- * - 'ftyp' box: major brand 'isom', minor version 512, compatible brands 'isom', 'iso2'.
- * - 'moov' box: Movie header ('mvhd'), video track ('trak'), media info ('mdia', 'minf', 'stbl').
- * - 'mdat' box: Media data box whose payload is the cascade encrypted container.
- * Previews as a valid MP4 video in VLC, Windows Media Player, QuickTime, Android, iOS,
- * and cloud storage providers (Google Drive, Dropbox, OneDrive) without triage flagging.
+ * - Playable Polyglot mode (Default): Embeds an authentic 1,493-byte ISO-BMFF media clip containing
+ *   real media frames and track metadata in mdat #1 indexed by moov, followed by mdat #2 box header
+ *   wrapping the cascade container. Plays natively in VLC, Windows Media Player, Movies & TV, Chrome, QuickTime.
+ * - Legacy Synthetic mode (legacySynthetic: true): Generates the 579-byte synthetic ISO-BMFF header for backward compatibility.
  */
-export function createMp4CarrierHeader(payloadLength: number): Uint8Array {
-  function makeBox(type: string, payload: Uint8Array): Uint8Array {
-    const box = new Uint8Array(8 + payload.length);
-    const view = new DataView(box.buffer);
-    view.setUint32(0, box.length, false);
-    box[4] = type.charCodeAt(0);
-    box[5] = type.charCodeAt(1);
-    box[6] = type.charCodeAt(2);
-    box[7] = type.charCodeAt(3);
-    box.set(payload, 8);
-    return box;
-  }
-
-  function concat(...arrays: Uint8Array[]): Uint8Array {
-    const total = arrays.reduce((acc, a) => acc + a.length, 0);
-    const res = new Uint8Array(total);
-    let off = 0;
-    for (const a of arrays) {
-      res.set(a, off);
-      off += a.length;
+export function createMp4CarrierHeader(payloadLength: number, options?: Mp4CarrierOptions): Uint8Array {
+  if (options?.legacySynthetic) {
+    function makeBox(type: string, payload: Uint8Array): Uint8Array {
+      const box = new Uint8Array(8 + payload.length);
+      const view = new DataView(box.buffer);
+      view.setUint32(0, box.length, false);
+      box[4] = type.charCodeAt(0);
+      box[5] = type.charCodeAt(1);
+      box[6] = type.charCodeAt(2);
+      box[7] = type.charCodeAt(3);
+      box.set(payload, 8);
+      return box;
     }
-    return res;
+
+    function concat(...arrays: Uint8Array[]): Uint8Array {
+      const total = arrays.reduce((acc, a) => acc + a.length, 0);
+      const res = new Uint8Array(total);
+      let off = 0;
+      for (const a of arrays) {
+        res.set(a, off);
+        off += a.length;
+      }
+      return res;
+    }
+
+    const ftypPayload = new Uint8Array(16);
+    const ftypView = new DataView(ftypPayload.buffer);
+    ftypPayload.set(new TextEncoder().encode('isom'), 0);
+    ftypView.setUint32(4, 512, false);
+    ftypPayload.set(new TextEncoder().encode('isomiso2'), 8);
+    const ftypBox = makeBox('ftyp', ftypPayload);
+
+    const mvhdPayload = new Uint8Array(100);
+    const mvhdView = new DataView(mvhdPayload.buffer);
+    mvhdView.setUint32(12, 1000, false);
+    mvhdView.setUint32(16, 1000, false);
+    mvhdView.setUint32(20, 0x00010000, false);
+    mvhdView.setUint16(24, 0x0100, false);
+    mvhdView.setUint32(36, 0x00010000, false);
+    mvhdView.setUint32(52, 0x00010000, false);
+    mvhdView.setUint32(80, 0x40000000, false);
+    mvhdView.setUint32(96, 2, false);
+    const mvhdBox = makeBox('mvhd', mvhdPayload);
+
+    const tkhdPayload = new Uint8Array(84);
+    const tkhdView = new DataView(tkhdPayload.buffer);
+    tkhdView.setUint32(0, 0x00000003, false);
+    tkhdView.setUint32(12, 1, false);
+    tkhdView.setUint32(20, 1000, false);
+    tkhdView.setUint32(36, 0x00010000, false);
+    tkhdView.setUint32(52, 0x00010000, false);
+    tkhdView.setUint32(80, 0x40000000, false);
+    tkhdView.setUint32(76, 64 << 16, false);
+    tkhdView.setUint32(80, 64 << 16, false);
+    const tkhdBox = makeBox('tkhd', tkhdPayload);
+
+    const mdhdPayload = new Uint8Array(24);
+    const mdhdView = new DataView(mdhdPayload.buffer);
+    mdhdView.setUint32(12, 1000, false);
+    mdhdView.setUint32(16, 1000, false);
+    mdhdView.setUint16(20, 0x55c4, false);
+    const mdhdBox = makeBox('mdhd', mdhdPayload);
+
+    const hdlrPayload = new Uint8Array(25);
+    hdlrPayload.set(new TextEncoder().encode('vide'), 8);
+    hdlrPayload.set(new TextEncoder().encode('VideoHandler\0'), 12);
+    const hdlrBox = makeBox('hdlr', hdlrPayload);
+
+    const vmhdPayload = new Uint8Array(12);
+    new DataView(vmhdPayload.buffer).setUint32(0, 1, false);
+    const vmhdBox = makeBox('vmhd', vmhdPayload);
+
+    const urlBox = makeBox('url ', new Uint8Array([0, 0, 0, 1]));
+    const drefPayload = new Uint8Array(8 + urlBox.length);
+    new DataView(drefPayload.buffer).setUint32(4, 1, false);
+    drefPayload.set(urlBox, 8);
+    const drefBox = makeBox('dref', drefPayload);
+    const dinfBox = makeBox('dinf', drefBox);
+
+    const visualEntry = new Uint8Array(78);
+    const vView = new DataView(visualEntry.buffer);
+    visualEntry.set(new TextEncoder().encode('mp4v'), 4);
+    vView.setUint16(14, 1, false);
+    vView.setUint16(24, 64, false);
+    vView.setUint16(26, 64, false);
+    vView.setUint32(28, 0x00480000, false);
+    vView.setUint32(32, 0x00480000, false);
+    vView.setUint16(40, 1, false);
+    visualEntry[42] = 12;
+    visualEntry.set(new TextEncoder().encode('FortKnox MP4'), 43);
+    vView.setUint16(74, 24, false);
+    vView.setInt16(76, -1, false);
+    vView.setUint32(0, visualEntry.length, false);
+
+    const stsdPayload = new Uint8Array(8 + visualEntry.length);
+    new DataView(stsdPayload.buffer).setUint32(4, 1, false);
+    stsdPayload.set(visualEntry, 8);
+    const stsdBox = makeBox('stsd', stsdPayload);
+
+    const sttsPayload = new Uint8Array(16);
+    const sttsView = new DataView(sttsPayload.buffer);
+    sttsView.setUint32(4, 1, false);
+    sttsView.setUint32(8, 1, false);
+    sttsView.setUint32(12, 1000, false);
+    const sttsBox = makeBox('stts', sttsPayload);
+
+    const stscPayload = new Uint8Array(20);
+    const stscView = new DataView(stscPayload.buffer);
+    stscView.setUint32(4, 1, false);
+    stscView.setUint32(8, 1, false);
+    stscView.setUint32(12, 1, false);
+    stscView.setUint32(16, 1, false);
+    const stscBox = makeBox('stsc', stscPayload);
+
+    const stszPayload = new Uint8Array(12);
+    const stszBox = makeBox('stsz', stszPayload);
+
+    const stcoPayload = new Uint8Array(12);
+    const stcoBox = makeBox('stco', stcoPayload);
+
+    const stblBox = makeBox('stbl', concat(stsdBox, sttsBox, stscBox, stszBox, stcoBox));
+    const minfBox = makeBox('minf', concat(vmhdBox, dinfBox, stblBox));
+    const mdiaBox = makeBox('mdia', concat(mdhdBox, hdlrBox, minfBox));
+    const trakBox = makeBox('trak', concat(tkhdBox, mdiaBox));
+    const moovBox = makeBox('moov', concat(mvhdBox, trakBox));
+
+    const isLarge = payloadLength + 8 > 0xFFFFFFFF;
+    let mdatHeader: Uint8Array;
+    if (!isLarge) {
+      mdatHeader = new Uint8Array(8);
+      const mView = new DataView(mdatHeader.buffer);
+      mView.setUint32(0, payloadLength + 8, false);
+      mdatHeader[4] = 0x6D;
+      mdatHeader[5] = 0x64;
+      mdatHeader[6] = 0x61;
+      mdatHeader[7] = 0x74;
+    } else {
+      mdatHeader = new Uint8Array(16);
+      const mView = new DataView(mdatHeader.buffer);
+      mView.setUint32(0, 1, false);
+      mdatHeader[4] = 0x6D;
+      mdatHeader[5] = 0x64;
+      mdatHeader[6] = 0x61;
+      mdatHeader[7] = 0x74;
+      mView.setBigUint64(8, BigInt(payloadLength + 16), false);
+    }
+
+    return concat(ftypBox, moovBox, mdatHeader);
   }
 
-  // 1. 'ftyp' box (24 bytes)
-  const ftypPayload = new Uint8Array(16);
-  const ftypView = new DataView(ftypPayload.buffer);
-  ftypPayload.set(new TextEncoder().encode('isom'), 0);
-  ftypView.setUint32(4, 512, false);
-  ftypPayload.set(new TextEncoder().encode('isomiso2'), 8);
-  const ftypBox = makeBox('ftyp', ftypPayload);
-
-  // 2. 'moov' box (metadata)
-  const mvhdPayload = new Uint8Array(100);
-  const mvhdView = new DataView(mvhdPayload.buffer);
-  mvhdView.setUint32(12, 1000, false); // timescale: 1000
-  mvhdView.setUint32(16, 1000, false); // duration: 1000 (1.0 sec)
-  mvhdView.setUint32(20, 0x00010000, false); // rate: 1.0
-  mvhdView.setUint16(24, 0x0100, false); // volume: 1.0
-  mvhdView.setUint32(36, 0x00010000, false);
-  mvhdView.setUint32(52, 0x00010000, false);
-  mvhdView.setUint32(80, 0x40000000, false);
-  mvhdView.setUint32(96, 2, false); // next track ID
-  const mvhdBox = makeBox('mvhd', mvhdPayload);
-
-  const tkhdPayload = new Uint8Array(84);
-  const tkhdView = new DataView(tkhdPayload.buffer);
-  tkhdView.setUint32(0, 0x00000003, false); // enabled + in movie
-  tkhdView.setUint32(12, 1, false); // track ID: 1
-  tkhdView.setUint32(20, 1000, false); // duration: 1000
-  tkhdView.setUint32(36, 0x00010000, false);
-  tkhdView.setUint32(52, 0x00010000, false);
-  tkhdView.setUint32(80, 0x40000000, false);
-  tkhdView.setUint32(76, 64 << 16, false); // width: 64
-  tkhdView.setUint32(80, 64 << 16, false); // height: 64
-  const tkhdBox = makeBox('tkhd', tkhdPayload);
-
-  const mdhdPayload = new Uint8Array(24);
-  const mdhdView = new DataView(mdhdPayload.buffer);
-  mdhdView.setUint32(12, 1000, false);
-  mdhdView.setUint32(16, 1000, false);
-  mdhdView.setUint16(20, 0x55c4, false); // language 'und'
-  const mdhdBox = makeBox('mdhd', mdhdPayload);
-
-  const hdlrPayload = new Uint8Array(25);
-  hdlrPayload.set(new TextEncoder().encode('vide'), 8);
-  hdlrPayload.set(new TextEncoder().encode('VideoHandler\0'), 12);
-  const hdlrBox = makeBox('hdlr', hdlrPayload);
-
-  const vmhdPayload = new Uint8Array(12);
-  new DataView(vmhdPayload.buffer).setUint32(0, 1, false);
-  const vmhdBox = makeBox('vmhd', vmhdPayload);
-
-  const urlBox = makeBox('url ', new Uint8Array([0, 0, 0, 1]));
-  const drefPayload = new Uint8Array(8 + urlBox.length);
-  new DataView(drefPayload.buffer).setUint32(4, 1, false);
-  drefPayload.set(urlBox, 8);
-  const drefBox = makeBox('dref', drefPayload);
-  const dinfBox = makeBox('dinf', drefBox);
-
-  const visualEntry = new Uint8Array(78);
-  const vView = new DataView(visualEntry.buffer);
-  visualEntry.set(new TextEncoder().encode('mp4v'), 4);
-  vView.setUint16(14, 1, false);
-  vView.setUint16(24, 64, false);
-  vView.setUint16(26, 64, false);
-  vView.setUint32(28, 0x00480000, false);
-  vView.setUint32(32, 0x00480000, false);
-  vView.setUint16(40, 1, false);
-  visualEntry[42] = 12;
-  visualEntry.set(new TextEncoder().encode('FortKnox MP4'), 43);
-  vView.setUint16(74, 24, false);
-  vView.setInt16(76, -1, false);
-  vView.setUint32(0, visualEntry.length, false);
-
-  const stsdPayload = new Uint8Array(8 + visualEntry.length);
-  new DataView(stsdPayload.buffer).setUint32(4, 1, false);
-  stsdPayload.set(visualEntry, 8);
-  const stsdBox = makeBox('stsd', stsdPayload);
-
-  const sttsPayload = new Uint8Array(16);
-  const sttsView = new DataView(sttsPayload.buffer);
-  sttsView.setUint32(4, 1, false);
-  sttsView.setUint32(8, 1, false);
-  sttsView.setUint32(12, 1000, false);
-  const sttsBox = makeBox('stts', sttsPayload);
-
-  const stscPayload = new Uint8Array(20);
-  const stscView = new DataView(stscPayload.buffer);
-  stscView.setUint32(4, 1, false);
-  stscView.setUint32(8, 1, false);
-  stscView.setUint32(12, 1, false);
-  stscView.setUint32(16, 1, false);
-  const stscBox = makeBox('stsc', stscPayload);
-
-  const stszPayload = new Uint8Array(12);
-  const stszBox = makeBox('stsz', stszPayload);
-
-  const stcoPayload = new Uint8Array(12);
-  const stcoBox = makeBox('stco', stcoPayload);
-
-  const stblBox = makeBox('stbl', concat(stsdBox, sttsBox, stscBox, stszBox, stcoBox));
-  const minfBox = makeBox('minf', concat(vmhdBox, dinfBox, stblBox));
-  const mdiaBox = makeBox('mdia', concat(mdhdBox, hdlrBox, minfBox));
-  const trakBox = makeBox('trak', concat(tkhdBox, mdiaBox));
-  const moovBox = makeBox('moov', concat(mvhdBox, trakBox));
-
-  // 3. 'mdat' box header
+  // Playable Polyglot Mode (Default): Authentic 1,493-byte base MP4 + mdat #2 box header
   const isLarge = payloadLength + 8 > 0xFFFFFFFF;
   let mdatHeader: Uint8Array;
   if (!isLarge) {
     mdatHeader = new Uint8Array(8);
     const mView = new DataView(mdatHeader.buffer);
     mView.setUint32(0, payloadLength + 8, false);
-    mdatHeader[4] = 0x6D; // 'm'
+    mdatHeader[4] = 0x6d; // 'm'
     mdatHeader[5] = 0x64; // 'd'
     mdatHeader[6] = 0x61; // 'a'
     mdatHeader[7] = 0x74; // 't'
   } else {
     mdatHeader = new Uint8Array(16);
     const mView = new DataView(mdatHeader.buffer);
-    mView.setUint32(0, 1, false); // 1 signals 64-bit size
-    mdatHeader[4] = 0x6D;
+    mView.setUint32(0, 1, false);
+    mdatHeader[4] = 0x6d;
     mdatHeader[5] = 0x64;
     mdatHeader[6] = 0x61;
     mdatHeader[7] = 0x74;
     mView.setBigUint64(8, BigInt(payloadLength + 16), false);
   }
 
-  return concat(ftypBox, moovBox, mdatHeader);
+  const carrier = new Uint8Array(MP4_PREVIEW_BASE.length + mdatHeader.length);
+  carrier.set(MP4_PREVIEW_BASE, 0);
+  carrier.set(mdatHeader, MP4_PREVIEW_BASE.length);
+  return carrier;
 }
 
 /**
@@ -1040,6 +1100,7 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
         return { isCarrier: true, payloadOffset: junkPos + 8, carrierType: 'wav' };
       }
       pos += 8 + chunkSize;
+      if (chunkSize % 2 !== 0) pos++;
     }
     return { isCarrier: false, payloadOffset: 0 };
   }
@@ -1056,6 +1117,16 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
       const chunkType = String.fromCharCode(fileStartBytes[pos+4], fileStartBytes[pos+5], fileStartBytes[pos+6], fileStartBytes[pos+7]);
       if (chunkType === 'foRt' || chunkType === 'ftKX' || chunkType === 'caSC') {
         return { isCarrier: true, payloadOffset: pos + 8, carrierType: 'png' };
+      }
+      if (chunkType === 'IEND') {
+        const nextPos = pos + 12;
+        if (nextPos + 8 <= fileStartBytes.length) {
+          const nextType = String.fromCharCode(fileStartBytes[nextPos+4], fileStartBytes[nextPos+5], fileStartBytes[nextPos+6], fileStartBytes[nextPos+7]);
+          if (nextType === 'foRt' || nextType === 'ftKX' || nextType === 'caSC') {
+            return { isCarrier: true, payloadOffset: nextPos + 8, carrierType: 'png' };
+          }
+        }
+        return { isCarrier: true, payloadOffset: nextPos, carrierType: 'png' };
       }
       pos += 8 + chunkLen + 4;
     }
@@ -1100,6 +1171,10 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
   ) {
     let pos = 0;
     const view = new DataView(fileStartBytes.buffer, fileStartBytes.byteOffset, fileStartBytes.byteLength);
+    let lastMdatOffset = -1;
+    let lastMdatHeaderLen = 8;
+    let seenMoov = false;
+
     while (pos + 8 <= fileStartBytes.length) {
       const boxSize = view.getUint32(pos, false);
       const boxType = String.fromCharCode(
@@ -1108,11 +1183,20 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
         fileStartBytes[pos + 6],
         fileStartBytes[pos + 7]
       );
-      if (boxType === 'mdat') {
-        if (boxSize === 1 && pos + 16 <= fileStartBytes.length) {
-          return { isCarrier: true, payloadOffset: pos + 16, carrierType: 'mp4' };
+      if (boxType === 'moov') {
+        seenMoov = true;
+      } else if (boxType === 'mdat') {
+        const headerLen = boxSize === 1 ? 16 : 8;
+        lastMdatOffset = pos;
+        lastMdatHeaderLen = headerLen;
+        // In dual-box playable MP4 architecture, payload container mdat appears after moov
+        if (seenMoov) {
+          return {
+            isCarrier: true,
+            payloadOffset: pos + headerLen,
+            carrierType: 'mp4',
+          };
         }
-        return { isCarrier: true, payloadOffset: pos + 8, carrierType: 'mp4' };
       }
       if (boxSize <= 0) break;
       if (boxSize === 1) {
@@ -1123,6 +1207,14 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
       } else {
         pos += boxSize;
       }
+    }
+    // Fallback if moov was not after mdat (e.g. legacy container where mdat is first)
+    if (lastMdatOffset !== -1) {
+      return {
+        isCarrier: true,
+        payloadOffset: lastMdatOffset + lastMdatHeaderLen,
+        carrierType: 'mp4',
+      };
     }
   }
 

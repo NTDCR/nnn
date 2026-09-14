@@ -847,8 +847,8 @@ async function executePoolDecryption(params: {
   const { file, workers, k1, k2, k4, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
   const fileSize = file.size;
 
-  // 1. Detect Polyglot Carrier header if present (WAVE, PNG, JPEG, or ISO-9660)
-  const probeHeaderSlice = file.slice(0, Math.min(45056, fileSize));
+  // 1. Detect Polyglot Carrier header if present (WAVE, PNG, JPEG, ISO-9660, or MP4)
+  const probeHeaderSlice = file.slice(0, Math.min(131072, fileSize));
   const probeHeaderBytes = new Uint8Array(await probeHeaderSlice.arrayBuffer());
   const carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
   const payloadStartOffset = carrierInfo.isCarrier ? carrierInfo.payloadOffset : 0;
