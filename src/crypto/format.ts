@@ -888,16 +888,17 @@ const MP4_PREVIEW_BASE: Uint8Array = decodeBase64(MP4_PREVIEW_BASE_B64);
 
 export interface Mp4CarrierOptions {
   legacySynthetic?: boolean;
-  fixedDuration?: boolean;
+  proportionalDuration?: boolean;
 }
 
 /**
  * Generates an authentic ISO Base Media File Format (ISO/IEC 14496-12 / MP4) video carrier header.
  * - Playable Polyglot mode (Default): Embeds an authentic 1,493-byte ISO-BMFF media clip containing
  *   real media frames and track metadata in mdat #1 indexed by moov, followed by mdat #2 box header
- *   wrapping the cascade container. Duration in mvhd, tkhd, elst, and mdhd dynamically scales
- *   with payloadLength at nominal 2 Mbps, mathematically matching the physical file size and seek bar.
- *   Plays natively in VLC, Windows Media Player, Movies & TV, Chrome, QuickTime.
+ *   wrapping the cascade container. By default, maintains stream-synchronized duration matching the
+ *   embedded media frames so VLC, Windows Media Player, Movies & TV, Chrome, and QuickTime play smoothly
+ *   with 0 freeze, 0 seek errors, and 0 premature stop. When options.proportionalDuration is enabled,
+ *   scales movie header duration to match payload size.
  * - Legacy Synthetic mode (legacySynthetic: true): Generates the 579-byte synthetic ISO-BMFF header for backward compatibility.
  */
 export function createMp4CarrierHeader(payloadLength: number, options?: Mp4CarrierOptions): Uint8Array {
@@ -1072,9 +1073,10 @@ export function createMp4CarrierHeader(payloadLength: number, options?: Mp4Carri
     mView.setBigUint64(8, BigInt(payloadLength + 16), false);
   }
 
-  // Clone base template and patch duration to dynamically match payload file size
+  // By default, maintain stream-synchronized duration matching embedded media frames (0 playback freeze/errors).
+  // When options?.proportionalDuration is true, scale movie header duration to match payload size.
   const base = MP4_PREVIEW_BASE.slice();
-  if (!options?.fixedDuration) {
+  if (options?.proportionalDuration) {
     // Nominal HD video bitrate: 2,000,000 bits per sec (250 KB/sec)
     // Duration T in seconds (clamped to range 3s .. 86,400s [24 hours])
     const T = Math.max(3, Math.min(86400, Math.round((payloadLength * 8) / 2000000)));
