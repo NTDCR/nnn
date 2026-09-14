@@ -75,15 +75,33 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) 
         <div className="flex items-center gap-1">
           <Layers className="w-3.5 h-3.5 text-slate-500 mr-1" />
           {[1, 2, 3, 4].map((layerNum) => {
-            const isCompleted = progress.phase === 'ENCRYPTING'
-              ? true
-              : layerNum >= progress.currentLayer;
+            const isFinished = percent >= 100;
+            let isCompleted = false;
+            let isActive = false;
+
+            if (isFinished) {
+              isCompleted = true;
+            } else if (progress.phase === 'ENCRYPTING') {
+              const activeLayer = Math.min(4, Math.floor(percent / 25) + 1);
+              isCompleted = layerNum < activeLayer;
+              isActive = layerNum === activeLayer;
+            } else {
+              // DECRYPTING: peeling from Layer 4 down to Layer 1
+              const activeLayer = Math.max(1, 4 - Math.floor(percent / 25));
+              isCompleted = layerNum > activeLayer;
+              isActive = layerNum === activeLayer;
+            }
+
             return (
               <span
                 key={layerNum}
-                title={`Layer ${layerNum}: ${LAYER_NAMES[layerNum - 1]}`}
-                className={`h-2 w-6 rounded-xs transition-colors ${
-                  isCompleted ? 'bg-indigo-500' : 'bg-slate-800'
+                title={`Layer ${layerNum}: ${LAYER_NAMES[layerNum - 1]}${isActive ? ' (Active)' : isCompleted ? ' (Completed)' : ' (Pending)'}`}
+                className={`h-2 w-6 rounded-xs transition-all duration-200 ${
+                  isCompleted
+                    ? 'bg-indigo-500 shadow-xs shadow-indigo-500/50'
+                    : isActive
+                    ? 'bg-indigo-400 ring-1 ring-indigo-300 animate-pulse'
+                    : 'bg-slate-800'
                 }`}
               />
             );

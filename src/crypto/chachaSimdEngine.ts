@@ -164,20 +164,32 @@ export class ChaChaSimdEngine {
     }
     memU8.set(data, dataOffset);
 
-    this.exports.encrypt_aead(
-      dataOffset,
-      dataLen,
-      AAD_OFFSET,
-      aadLen,
-      KEY_OFFSET,
-      NONCE_OFFSET,
-      TAG_OFFSET,
-      OTK_OFFSET
-    );
+    try {
+      this.exports.encrypt_aead(
+        dataOffset,
+        dataLen,
+        AAD_OFFSET,
+        aadLen,
+        KEY_OFFSET,
+        NONCE_OFFSET,
+        TAG_OFFSET,
+        OTK_OFFSET
+      );
 
-    memU8 = new Uint8Array(this.memory.buffer);
-    data.set(memU8.subarray(dataOffset, dataOffset + dataLen));
-    return new Uint8Array(memU8.subarray(TAG_OFFSET, TAG_OFFSET + 16));
+      memU8 = new Uint8Array(this.memory.buffer);
+      data.set(memU8.subarray(dataOffset, dataOffset + dataLen));
+      return new Uint8Array(memU8.subarray(TAG_OFFSET, TAG_OFFSET + 16));
+    } finally {
+      const scrub = new Uint8Array(this.memory.buffer);
+      scrub.subarray(dataOffset, dataOffset + dataLen).fill(0);
+      scrub.subarray(KEY_OFFSET, KEY_OFFSET + 32).fill(0);
+      scrub.subarray(NONCE_OFFSET, NONCE_OFFSET + 12).fill(0);
+      scrub.subarray(TAG_OFFSET, TAG_OFFSET + 16).fill(0);
+      scrub.subarray(OTK_OFFSET, OTK_OFFSET + 32).fill(0);
+      if (aadLen > 0) {
+        scrub.subarray(AAD_OFFSET, AAD_OFFSET + aadLen).fill(0);
+      }
+    }
   }
 
   /**
@@ -211,25 +223,37 @@ export class ChaChaSimdEngine {
     }
     memU8.set(data, dataOffset);
 
-    const res = this.exports.decrypt_aead(
-      dataOffset,
-      dataLen,
-      AAD_OFFSET,
-      aadLen,
-      KEY_OFFSET,
-      NONCE_OFFSET,
-      TAG_OFFSET,
-      OTK_OFFSET,
-      COMP_TAG_OFFSET
-    );
+    try {
+      const res = this.exports.decrypt_aead(
+        dataOffset,
+        dataLen,
+        AAD_OFFSET,
+        aadLen,
+        KEY_OFFSET,
+        NONCE_OFFSET,
+        TAG_OFFSET,
+        OTK_OFFSET,
+        COMP_TAG_OFFSET
+      );
 
-    if (res !== 0) {
-      memU8.fill(0, dataOffset, dataOffset + dataLen);
-      throw new Error('Decryption failed. Check all keys.');
+      if (res !== 0) {
+        throw new Error('Decryption failed. Check all keys.');
+      }
+
+      memU8 = new Uint8Array(this.memory.buffer);
+      data.set(memU8.subarray(dataOffset, dataOffset + dataLen));
+    } finally {
+      const scrub = new Uint8Array(this.memory.buffer);
+      scrub.subarray(dataOffset, dataOffset + dataLen).fill(0);
+      scrub.subarray(KEY_OFFSET, KEY_OFFSET + 32).fill(0);
+      scrub.subarray(NONCE_OFFSET, NONCE_OFFSET + 12).fill(0);
+      scrub.subarray(TAG_OFFSET, TAG_OFFSET + 16).fill(0);
+      scrub.subarray(OTK_OFFSET, OTK_OFFSET + 32).fill(0);
+      scrub.subarray(COMP_TAG_OFFSET, COMP_TAG_OFFSET + 16).fill(0);
+      if (aadLen > 0) {
+        scrub.subarray(AAD_OFFSET, AAD_OFFSET + aadLen).fill(0);
+      }
     }
-
-    memU8 = new Uint8Array(this.memory.buffer);
-    data.set(memU8.subarray(dataOffset, dataOffset + dataLen));
   }
 
   /**

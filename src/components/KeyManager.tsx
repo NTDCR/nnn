@@ -199,11 +199,12 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   };
 
   const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const inputElement = e.target;
+    const file = inputElement.files?.[0];
+    inputElement.value = '';
     if (!file) return;
     if (file.size > 1024 * 1024) {
       setImportError('Invalid key file: file size exceeds 1 MB limit.');
-      e.target.value = '';
       return;
     }
     setImportError(null);
@@ -289,7 +290,6 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
       }
     };
     reader.readAsText(file);
-    e.target.value = '';
   };
 
   const toggleShow = (idx: number) => {

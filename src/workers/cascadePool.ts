@@ -21,12 +21,14 @@ import {
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
+import { SliceableDataSource } from '../crypto/compositeReader.ts';
+
 const CHUNK_SIZE = 1048576; // 1 MB
 const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE + 32;
 
 export interface ProcessFileOptions {
   action: 'ENCRYPT' | 'DECRYPT';
-  file: File;
+  file: File | SliceableDataSource;
   keys: CascadeKeys;
   coreConcurrency?: 'auto' | 'webgpu' | 2 | 4 | 6 | 8;
   onStart?: (totalChunks: number, totalBytes: number) => void;
@@ -396,7 +398,7 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
 }
 
 async function executePoolEncryption(params: {
-  file: File;
+  file: File | SliceableDataSource;
   workers: Worker[];
   k1: Uint8Array;
   k2: Uint8Array;
@@ -474,13 +476,14 @@ async function executePoolEncryption(params: {
     });
   };
 
-  // Real-time sliding window speed calculation (2.0s window) with weighted blend
+  // Real-time sliding window speed calculation (2.0s window) with EMA smoothing
   interface SpeedSample {
     time: number;
     bytes: number;
   }
   const speedSamples: SpeedSample[] = [];
   const WINDOW_MS = 2000;
+  let smoothedSpeed = 0;
 
   const calculateLiveSpeed = (chunkBytes: number): number => {
     const now = performance.now();
@@ -491,19 +494,30 @@ async function executePoolEncryption(params: {
     const elapsedTotalSec = Math.max(0.05, (now - startTime) / 1000);
     const overallSpeed = processedBytes / (1024 * 1024) / elapsedTotalSec;
 
+    let instantSpeed: number;
     if (speedSamples.length < 2) {
-      return overallSpeed;
+      instantSpeed = overallSpeed;
+    } else {
+      const windowSec = (now - speedSamples[0].time) / 1000;
+      if (windowSec < 0.1) {
+        instantSpeed = overallSpeed;
+      } else {
+        let windowBytes = 0;
+        for (let i = 0; i < speedSamples.length; i++) {
+          windowBytes += speedSamples[i].bytes;
+        }
+        const windowSpeed = windowBytes / (1024 * 1024) / windowSec;
+        instantSpeed = windowSpeed * 0.7 + overallSpeed * 0.3;
+      }
     }
-    const windowSec = (now - speedSamples[0].time) / 1000;
-    if (windowSec < 0.1) {
-      return overallSpeed;
+
+    if (smoothedSpeed === 0) {
+      smoothedSpeed = instantSpeed;
+    } else {
+      // EMA alpha = 0.2: dampens burst jitter from concurrent multi-core thread arrivals
+      smoothedSpeed = smoothedSpeed * 0.8 + instantSpeed * 0.2;
     }
-    let windowBytes = 0;
-    for (let i = 0; i < speedSamples.length; i++) {
-      windowBytes += speedSamples[i].bytes;
-    }
-    const windowSpeed = windowBytes / (1024 * 1024) / windowSec;
-    return windowSpeed * 0.7 + overallSpeed * 0.3;
+    return smoothedSpeed;
   };
 
   // Setup permanent message dispatch router for each worker (eliminates per-chunk addEventListener/removeEventListener churn)
@@ -686,9 +700,11 @@ async function executePoolEncryption(params: {
   const metadataOffset = chunkCount * ENCRYPTED_CHUNK_SIZE;
   const tailPointer = await encryptTailPointer(metadataOffset, METADATA_SIZE, k4, salt16);
 
+  const metaCopy = new Uint8Array(maskedMeta);
+  const tailCopy = new Uint8Array(tailPointer);
   try {
-    await onChunkOutput(maskedMeta);
-    await onChunkOutput(tailPointer);
+    await onChunkOutput(metaCopy);
+    await onChunkOutput(tailCopy);
   } finally {
     maskedMeta.fill(0);
     tailPointer.fill(0);
@@ -729,7 +745,7 @@ async function executePoolEncryption(params: {
 }
 
 async function executePoolDecryption(params: {
-  file: File;
+  file: File | SliceableDataSource;
   workers: Worker[];
   k1: Uint8Array;
   k2: Uint8Array;
@@ -832,13 +848,14 @@ async function executePoolDecryption(params: {
     });
   };
 
-  // Real-time sliding window speed calculation (2.0s window) with weighted blend
+  // Real-time sliding window speed calculation (2.0s window) with EMA smoothing
   interface SpeedSample {
     time: number;
     bytes: number;
   }
   const speedSamples: SpeedSample[] = [];
   const WINDOW_MS = 2000;
+  let smoothedSpeed = 0;
 
   const calculateLiveSpeed = (chunkBytes: number): number => {
     const now = performance.now();
@@ -849,19 +866,30 @@ async function executePoolDecryption(params: {
     const elapsedTotalSec = Math.max(0.05, (now - startTime) / 1000);
     const overallSpeed = processedBytes / (1024 * 1024) / elapsedTotalSec;
 
+    let instantSpeed: number;
     if (speedSamples.length < 2) {
-      return overallSpeed;
+      instantSpeed = overallSpeed;
+    } else {
+      const windowSec = (now - speedSamples[0].time) / 1000;
+      if (windowSec < 0.1) {
+        instantSpeed = overallSpeed;
+      } else {
+        let windowBytes = 0;
+        for (let i = 0; i < speedSamples.length; i++) {
+          windowBytes += speedSamples[i].bytes;
+        }
+        const windowSpeed = windowBytes / (1024 * 1024) / windowSec;
+        instantSpeed = windowSpeed * 0.7 + overallSpeed * 0.3;
+      }
     }
-    const windowSec = (now - speedSamples[0].time) / 1000;
-    if (windowSec < 0.1) {
-      return overallSpeed;
+
+    if (smoothedSpeed === 0) {
+      smoothedSpeed = instantSpeed;
+    } else {
+      // EMA alpha = 0.2: dampens burst jitter from concurrent multi-core thread arrivals
+      smoothedSpeed = smoothedSpeed * 0.8 + instantSpeed * 0.2;
     }
-    let windowBytes = 0;
-    for (let i = 0; i < speedSamples.length; i++) {
-      windowBytes += speedSamples[i].bytes;
-    }
-    const windowSpeed = windowBytes / (1024 * 1024) / windowSec;
-    return windowSpeed * 0.7 + overallSpeed * 0.3;
+    return smoothedSpeed;
   };
 
   // Background pipelined chunk prefetcher for encrypted chunks
