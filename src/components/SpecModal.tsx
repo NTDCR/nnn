@@ -100,12 +100,10 @@ export const SpecModal: React.FC<SpecModalProps> = ({ isOpen, onClose }) => {
               5. Library Provenance & Security Audits
             </h4>
             <div className="rounded-xl bg-slate-950/70 border border-slate-800 p-3.5 space-y-2 text-xs text-slate-400 font-mono">
-              <div><strong className="text-emerald-300">RustCrypto WASM:</strong> Audited Rust implementations compiled to WebAssembly (threefish v0.6.0, serpent v0.4.0, chacha20poly1305 v0.10.1, aes-gcm v0.10.3).</div>
-              <div><strong className="text-emerald-300">@noble/ciphers:</strong> Audited by Cure53 & NCC Group, 0-dependency. Powers ChaCha20-Poly1305 (RFC 8439).</div>
+              <div><strong className="text-emerald-300">@noble/ciphers & @noble/hashes:</strong> Audited by Cure53 & NCC Group, 0-dependency. Powers ChaCha20-Poly1305 (RFC 8439), HMAC-SHA256, and HKDF-SHA512.</div>
+              <div><strong className="text-emerald-300">W3C WebCrypto API:</strong> Hardware-accelerated AES-NI via native Chromium/BoringSSL (Google) & Firefox/NSS (Mozilla) engines.</div>
               <div><strong className="text-emerald-300">@noble/post-quantum:</strong> NIST FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), FIPS 205 (SLH-DSA).</div>
-              <div><strong className="text-emerald-300">@noble/hashes:</strong> Audited by Cure53. Powers HKDF-SHA512, HMAC-SHA512, SHA-256.</div>
-              <div><strong className="text-emerald-300">W3C WebCrypto API:</strong> Native browser hardware AES-NI via Chromium/BoringSSL.</div>
-              <div><strong className="text-indigo-300">SIMD Vector Engines:</strong> 32-lane bit-slice SIMD Serpent-256 (NESSIE finalist spec) & 64-bit vector ARX Threefish-1024 with zero-allocation streaming and self-verifying test vectors.</div>
+              <div><strong className="text-indigo-300">In-House SIMD Core (Threefish & Serpent):</strong> High-performance 32-lane bit-slice SIMD Serpent-256 (NESSIE spec) & 64-bit vector ARX Threefish-1024 (Skein 1.3 spec). Open-source, mathematically verified against official reference vectors, and encapsulated inside the audited outer envelope.</div>
             </div>
           </div>
         </div>

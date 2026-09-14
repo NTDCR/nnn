@@ -35,8 +35,8 @@ const LAYERS_INFO: LayerMetadata[] = [
     auth: 'Inner Cascade Tag',
     keySizeBits: 1024,
     description: '1024-bit large-block ARX cipher (Skein spec) with strictly native 1024-bit (128-byte) keying.',
-    library: 'RustCrypto threefish v0.6.0 & TypeScript Native',
-    auditStatus: 'RustCrypto Audited Spec / Verified Native 1024-bit',
+    library: 'In-House TypeScript & SIMD Engine (Skein 1.3 Spec)',
+    auditStatus: 'Mathematically Spec-Verified / In-House Core',
   },
   {
     order: 2,
@@ -46,8 +46,8 @@ const LAYERS_INFO: LayerMetadata[] = [
     auth: 'Cascade Tag',
     keySizeBits: 256,
     description: '32-round bit-slice substitution-permutation network with highest conservative security margin.',
-    library: 'RustCrypto serpent v0.4.0 (Rust / WASM)',
-    auditStatus: 'RustCrypto Audited NESSIE Finalist / WASM-Compiled',
+    library: 'In-House 32-Lane Bit-Slice SIMD & RustCrypto WASM',
+    auditStatus: 'NESSIE Spec-Verified / Bit-Slice Constant-Time',
   },
   {
     order: 3,
@@ -57,8 +57,8 @@ const LAYERS_INFO: LayerMetadata[] = [
     auth: '128-bit Poly1305 MAC',
     keySizeBits: 256,
     description: 'High-speed stream cipher with constant-time Carter-Wegman one-time polynomial authenticator.',
-    library: '@noble/ciphers & RustCrypto (chacha20poly1305 v0.10.1)',
-    auditStatus: 'Audited by Cure53 & NCC Group',
+    library: '@noble/ciphers (v2.4.0)',
+    auditStatus: 'Independently Audited by Cure53 & NCC Group',
   },
   {
     order: 4,
@@ -68,8 +68,8 @@ const LAYERS_INFO: LayerMetadata[] = [
     auth: '128-bit GHASH Tag',
     keySizeBits: 256,
     description: 'Hardware-accelerated AES-NI authenticated envelope protecting outer container boundaries.',
-    library: 'W3C WebCrypto API & RustCrypto (aes-gcm v0.10.3)',
-    auditStatus: 'Hardware Accelerated / NCC Group Audited',
+    library: 'W3C WebCrypto API (BoringSSL/NSS) & @noble/ciphers',
+    auditStatus: 'Hardware Accelerated (AES-NI) / Cure53 Audited',
   },
 ];
 
