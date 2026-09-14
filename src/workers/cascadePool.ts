@@ -437,8 +437,14 @@ async function executePoolEncryption(params: {
   crypto.getRandomValues(nonceAes);
 
   const isWavCarrier = Boolean(outputFileName && /\.wav$/i.test(outputFileName));
-  const blindDelta = antiForensicPadding && antiForensicPadding > 0 ? deriveBlindPointerDelta(k4, BLIND_MAX_DELTA) : 0;
-  const prefixJitterLen = antiForensicPadding && antiForensicPadding > 0 ? Math.floor(antiForensicPadding) : 0;
+  const blindDelta = deriveBlindPointerDelta(k4, BLIND_MAX_DELTA);
+  let prefixJitterLen = antiForensicPadding && antiForensicPadding >= 1024 ? Math.floor(antiForensicPadding) : 0;
+  if (prefixJitterLen === 0) {
+    // Strict invariant: CSPRNG jitter is mandatory on all containers (1 KB - 64 KB)
+    const randBuf = new Uint16Array(1);
+    crypto.getRandomValues(randBuf);
+    prefixJitterLen = 1024 + (randBuf[0] % 64512);
+  }
   const suffixJitterLen = blindDelta;
   const totalContainerBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + METADATA_SIZE + prefixJitterLen + POINTER_BLOCK_SIZE + suffixJitterLen;
 
@@ -817,41 +823,27 @@ async function executePoolDecryption(params: {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
-  // 2. Decrypt pointer (Attempt A: 2X Blind KDF offset; Attempt B: Legacy/Standard EOF-32 fallback)
+  // 2. Decrypt pointer (Strict V2 Blind KDF offset - legacy EOF-32 fallback permanently removed)
   const delta = deriveBlindPointerDelta(k4, BLIND_MAX_DELTA);
-  let metadataOffset = -1;
-  let metadataLength = 0;
-  let pointerFound = false;
-
-  if (delta > 0 && effectiveContainerSize >= POINTER_BLOCK_SIZE + delta + 16) {
-    try {
-      const blindPos = fileSize - POINTER_BLOCK_SIZE - delta;
-      const blindTailSlice = file.slice(blindPos, blindPos + POINTER_BLOCK_SIZE);
-      const blindTailBytes = new Uint8Array(await blindTailSlice.arrayBuffer());
-
-      const blindSaltSlice = file.slice(blindPos - 16, blindPos);
-      const blindSaltBytes = new Uint8Array(await blindSaltSlice.arrayBuffer());
-
-      const res = await decryptTailPointer(blindTailBytes, k4, blindSaltBytes);
-      metadataOffset = res.offset;
-      metadataLength = res.length;
-      pointerFound = true;
-    } catch {
-      // Blind attempt did not match (e.g. legacy container), proceed to legacy attempt
-    }
+  if (effectiveContainerSize < POINTER_BLOCK_SIZE + delta + 16) {
+    throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
-  if (!pointerFound) {
-    const tailSlice = file.slice(fileSize - POINTER_BLOCK_SIZE, fileSize);
-    const tailBytes = new Uint8Array(await tailSlice.arrayBuffer());
+  const blindPos = fileSize - POINTER_BLOCK_SIZE - delta;
+  const blindTailSlice = file.slice(blindPos, blindPos + POINTER_BLOCK_SIZE);
+  const blindTailBytes = new Uint8Array(await blindTailSlice.arrayBuffer());
 
-    const saltSlice = file.slice(fileSize - POINTER_BLOCK_SIZE - 16, fileSize - POINTER_BLOCK_SIZE);
-    const saltBytes = new Uint8Array(await saltSlice.arrayBuffer());
+  const blindSaltSlice = file.slice(blindPos - 16, blindPos);
+  const blindSaltBytes = new Uint8Array(await blindSaltSlice.arrayBuffer());
 
-    const res = await decryptTailPointer(tailBytes, k4, saltBytes);
+  let metadataOffset = -1;
+  let metadataLength = 0;
+  try {
+    const res = await decryptTailPointer(blindTailBytes, k4, blindSaltBytes);
     metadataOffset = res.offset;
     metadataLength = res.length;
-    pointerFound = true;
+  } catch {
+    throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
   if (

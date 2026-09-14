@@ -44,13 +44,6 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     return 'auto';
   });
 
-  const [antiForensicMode, setAntiForensicMode] = useState<boolean>(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const saved = localStorage.getItem('fortknox_antiforensic');
-      if (saved !== null) return saved === 'true';
-    }
-    return true; // Default to ON always
-  });
 
   const [stealthExtension, setStealthExtension] = useState<string>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -262,11 +255,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     const safeRawName = baseRawName.replace(/\.part[-_]?\d+$/i, '');
     let targetFileName: string;
     if (action === 'ENCRYPT') {
-      if (antiForensicMode && stealthExtension !== '.fortknox') {
-        targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : safeRawName;
-      } else {
-        targetFileName = `${safeRawName}.fortknox`;
-      }
+      targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : `${safeRawName}.dat`;
     } else {
       const stripped = safeRawName.replace(/\.(fortknox|dat|wav|bin|iso)$/i, '');
       if (stripped.length > 0 && stripped !== safeRawName) {
@@ -389,8 +378,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     };
 
     let calculatedPadding = 0;
-    if (action === 'ENCRYPT' && antiForensicMode) {
-      // 1 KB to 64 KB CSPRNG jitter noise to destroy the mathematical file size modulo signature
+    if (action === 'ENCRYPT') {
+      // 1 KB to 64 KB CSPRNG jitter noise to destroy the mathematical file size modulo signature (Mandatory V2 invariant)
       const randBuf = new Uint16Array(1);
       crypto.getRandomValues(randBuf);
       calculatedPadding = 1024 + (randBuf[0] % 64512);
@@ -603,72 +592,51 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         </div>
       </div>
 
-      {/* Anti-Forensic / Plausible Deniability Options Bar */}
-      <div id="antiforensic-bar" className="mt-3.5 flex flex-wrap items-center justify-between gap-2.5 p-2.5 sm:p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
-        <label
-          htmlFor="anti-forensic-toggle"
-          className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none"
-          title="When active: appends cryptographically random tail jitter (1-64 KB) to destroy the mathematical file-size modulo signature, making the container forensically indistinguishable from /dev/urandom disk-wipe noise."
-        >
-          <input
-            type="checkbox"
-            id="anti-forensic-toggle"
-            checked={antiForensicMode}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              setAntiForensicMode(checked);
-              try {
-                if (typeof window !== 'undefined' && window.localStorage) {
-                  localStorage.setItem('fortknox_antiforensic', checked ? 'true' : 'false');
-                }
-              } catch {
-                // Ignore
-              }
-            }}
-            disabled={isProcessing}
-            className="rounded border-slate-700 bg-slate-800 text-purple-600 focus:ring-purple-500 cursor-pointer"
-          />
+      {/* 2X Anti-Forensic / Plausible Deniability Bar */}
+      <div id="antiforensic-bar" className="mt-3.5 flex flex-wrap items-center justify-between gap-2.5 p-2.5 sm:p-3 rounded-xl bg-slate-950/70 border border-purple-900/60 shadow-inner">
+        <div className="flex items-center gap-2 text-xs text-slate-300 select-none">
           <span className="flex items-center gap-1.5 font-mono text-[11px] sm:text-xs text-purple-300 font-medium">
             <EyeOff className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-            <span>Anti-Forensic Jitter (Plausible Deniability)</span>
+            <span>2X Anti-Forensics: Permanent Active</span>
           </span>
-        </label>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/80 border border-purple-700/60 text-purple-200 font-mono">
+            V2 Blind KDF • Jitter Noise
+          </span>
+        </div>
 
-        {antiForensicMode && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 bg-purple-950/40 border border-purple-800/50 rounded-lg px-2.5 py-1">
-              <span className="text-[10px] sm:text-[11px] text-purple-300 font-mono">Format:</span>
-              <select
-                id="stealth-extension-select"
-                value={stealthExtension}
-                onChange={(e) => {
-                  const ext = e.target.value;
-                  setStealthExtension(ext);
-                  try {
-                    if (typeof window !== 'undefined' && window.localStorage) {
-                      localStorage.setItem('fortknox_stealth_ext', ext);
-                    }
-                  } catch {
-                    // Ignore
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-purple-950/40 border border-purple-800/50 rounded-lg px-2.5 py-1">
+            <span className="text-[10px] sm:text-[11px] text-purple-300 font-mono">Format:</span>
+            <select
+              id="stealth-extension-select"
+              value={stealthExtension}
+              onChange={(e) => {
+                const ext = e.target.value;
+                setStealthExtension(ext);
+                try {
+                  if (typeof window !== 'undefined' && window.localStorage) {
+                    localStorage.setItem('fortknox_stealth_ext', ext);
                   }
-                }}
-                disabled={isProcessing}
-                className="bg-transparent text-purple-200 font-mono text-[11px] outline-none cursor-pointer"
-              >
-                <option value=".dat" className="bg-slate-900 text-slate-200">.dat (Raw Binary Data)</option>
-                <option value=".wav" className="bg-slate-900 text-slate-200">.wav (Playable Audio Polyglot)</option>
-                <option value=".bin" className="bg-slate-900 text-slate-200">.bin (Memory Image)</option>
-                <option value=".iso" className="bg-slate-900 text-slate-200">.iso (Disk Image)</option>
-                <option value=".fortknox" className="bg-slate-900 text-slate-200">.fortknox (Standard)</option>
-              </select>
-            </div>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/70 border border-purple-800/60 text-purple-300 font-mono hidden lg:inline-flex items-center gap-1">
-              {stealthExtension === '.wav'
-                ? 'Audio Polyglot Active • Plays in Media Players • Bypasses Entropy Scanners'
-                : 'Blind KDF Offset • Modulo Annihilated • 0 Magic Bytes'}
-            </span>
+                } catch {
+                  // Ignore
+                }
+              }}
+              disabled={isProcessing}
+              className="bg-transparent text-purple-200 font-mono text-[11px] outline-none cursor-pointer"
+            >
+              <option value=".dat" className="bg-slate-900 text-slate-200">.dat (Raw Binary Data)</option>
+              <option value=".wav" className="bg-slate-900 text-slate-200">.wav (Playable Audio Polyglot)</option>
+              <option value=".bin" className="bg-slate-900 text-slate-200">.bin (Memory Image)</option>
+              <option value=".iso" className="bg-slate-900 text-slate-200">.iso (Disk Image)</option>
+              <option value=".fortknox" className="bg-slate-900 text-slate-200">.fortknox (Standard)</option>
+            </select>
           </div>
-        )}
+          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/70 border border-purple-800/60 text-purple-300 font-mono hidden lg:inline-flex items-center gap-1">
+            {stealthExtension === '.wav'
+              ? 'Audio Polyglot Active • Plays in Media Players • Bypasses Entropy Scanners'
+              : 'Blind Pointer Offset • Modulo Annihilated • 0 Magic Bytes'}
+          </span>
+        </div>
       </div>
 
       {/* Drag & Drop Target - Mobile-optimized tap target */}
