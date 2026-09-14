@@ -507,238 +507,7 @@ export function createWavCarrierHeader(payloadLength: number, options?: WavCarri
   return header;
 }
 
-// --- PNG / JPEG Polyglot Carrier Engine ---
 
-const CRC_TABLE = new Uint32Array(256);
-for (let n = 0; n < 256; n++) {
-  let c = n;
-  for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
-  CRC_TABLE[n] = c >>> 0;
-}
-
-export function calculateCrc32(buf: Uint8Array): number {
-  let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-export function calculateAdler32(buf: Uint8Array): number {
-  let a = 1, b = 0;
-  for (let i = 0; i < buf.length; i++) {
-    a = (a + buf[i]) % 65521;
-    b = (b + a) % 65521;
-  }
-  return ((b << 16) | a) >>> 0;
-}
-
-export interface PngCarrierOptions {
-  width?: number;
-  height?: number;
-  includeAncillaryMetadata?: boolean;
-}
-
-export interface JpgCarrierOptions {
-  includeExif?: boolean;
-}
-
-/**
- * Generates a valid PNG carrier header
- * When includeAncillaryMetadata is enabled, synthesizes standard W3C ancillary chunks (sRGB, pHYs, tEXt)
- * and an adaptive gradient canvas. Default mode produces the verified 264-byte baseline header.
- */
-export function createPngCarrierHeader(payloadLength: number, options?: PngCarrierOptions): Uint8Array {
-  const includeMeta = options?.includeAncillaryMetadata ?? false;
-  const width = options?.width ?? 8;
-  const height = options?.height ?? 8;
-
-  const rawScanlines = new Uint8Array(height * (1 + width * 3));
-  for (let y = 0; y < height; y++) {
-    const rowStart = y * (1 + width * 3);
-    rawScanlines[rowStart] = 0;
-    for (let x = 0; x < width; x++) {
-      const px = rowStart + 1 + x * 3;
-      if (includeMeta) {
-        rawScanlines[px] = Math.min(255, 30 + Math.floor((x / width) * 40));
-        rawScanlines[px + 1] = Math.min(255, 30 + Math.floor((y / height) * 40));
-        rawScanlines[px + 2] = Math.min(255, 60 + Math.floor(((x + y) / (width + height)) * 80));
-      } else {
-        rawScanlines[px] = 0x1E;     // R
-        rawScanlines[px + 1] = 0x1E; // G
-        rawScanlines[px + 2] = 0x2E; // B
-      }
-    }
-  }
-  const adler = calculateAdler32(rawScanlines);
-  const rawLen = rawScanlines.length;
-  const zlibStream = new Uint8Array(2 + 5 + rawLen + 4);
-  zlibStream[0] = 0x78; zlibStream[1] = 0x01;
-  zlibStream[2] = 0x01;
-  zlibStream[3] = rawLen & 0xff; zlibStream[4] = (rawLen >> 8) & 0xff;
-  const nlen = (~rawLen) & 0xffff;
-  zlibStream[5] = nlen & 0xff; zlibStream[6] = (nlen >> 8) & 0xff;
-  zlibStream.set(rawScanlines, 7);
-  const adlerOffset = 7 + rawLen;
-  zlibStream[adlerOffset] = (adler >> 24) & 0xff;
-  zlibStream[adlerOffset + 1] = (adler >> 16) & 0xff;
-  zlibStream[adlerOffset + 2] = (adler >> 8) & 0xff;
-  zlibStream[adlerOffset + 3] = adler & 0xff;
-
-  if (!includeMeta) {
-    const header = new Uint8Array(8 + 25 + (12 + zlibStream.length) + 8);
-    const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
-
-    // 1. Signature
-    header.set([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], 0);
-
-    // 2. IHDR
-    view.setUint32(8, 13, false);
-    header.set([0x49, 0x48, 0x44, 0x52], 12); // IHDR
-    view.setUint32(16, width, false);
-    view.setUint32(20, height, false);
-    header[24] = 8; // 8-bit
-    header[25] = 2; // RGB
-    header[26] = 0; header[27] = 0; header[28] = 0;
-    const ihdrCrc = calculateCrc32(header.subarray(12, 29));
-    view.setUint32(29, ihdrCrc, false);
-
-    // 3. IDAT
-    const idatOffset = 33;
-    view.setUint32(idatOffset, zlibStream.length, false);
-    header.set([0x49, 0x44, 0x41, 0x54], idatOffset + 4); // IDAT
-    header.set(zlibStream, idatOffset + 8);
-    const idatCrc = calculateCrc32(header.subarray(idatOffset + 4, idatOffset + 8 + zlibStream.length));
-    view.setUint32(idatOffset + 8 + zlibStream.length, idatCrc, false);
-
-    // 4. foRt ancillary private chunk header (length = payloadLength)
-    const fortOffset = idatOffset + 12 + zlibStream.length;
-    view.setUint32(fortOffset, payloadLength, false);
-    header.set([0x66, 0x6F, 0x52, 0x74], fortOffset + 4); // "foRt"
-
-    return header;
-  }
-
-  // Enhanced PNG header with sRGB, pHYs, and tEXt chunks
-  const srgbData = new Uint8Array([0x73, 0x52, 0x47, 0x42, 0x00]); // sRGB\0
-  const srgbCrc = calculateCrc32(srgbData);
-
-  const physData = new Uint8Array([
-    0x70, 0x48, 0x59, 0x73,
-    0x00, 0x00, 0x0E, 0xC4, // 3780 dpm X (96 DPI)
-    0x00, 0x00, 0x0E, 0xC4, // 3780 dpm Y
-    0x01                    // unit: meter
-  ]);
-  const physCrc = calculateCrc32(physData);
-
-  const textKeyword = new TextEncoder().encode('Software\0FortKnox Photo Engine');
-  const textData = new Uint8Array(4 + textKeyword.length);
-  textData.set([0x74, 0x45, 0x58, 0x74], 0); // "tEXt"
-  textData.set(textKeyword, 4);
-  const textCrc = calculateCrc32(textData);
-
-  const totalLen = 8 + 25 + 13 + 21 + (12 + textKeyword.length) + (12 + zlibStream.length) + 8;
-  const header = new Uint8Array(totalLen);
-  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
-
-  let p = 0;
-  // 1. Signature
-  header.set([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], p); p += 8;
-
-  // 2. IHDR
-  view.setUint32(p, 13, false); p += 4;
-  header.set([0x49, 0x48, 0x44, 0x52], p);
-  view.setUint32(p + 4, width, false);
-  view.setUint32(p + 8, height, false);
-  header[p + 12] = 8;
-  header[p + 13] = 2;
-  header[p + 14] = 0; header[p + 15] = 0; header[p + 16] = 0;
-  const ihdrCrc = calculateCrc32(header.subarray(p, p + 17));
-  p += 17;
-  view.setUint32(p, ihdrCrc, false); p += 4;
-
-  // 3. sRGB
-  view.setUint32(p, 1, false); p += 4;
-  header.set(srgbData, p); p += srgbData.length;
-  view.setUint32(p, srgbCrc, false); p += 4;
-
-  // 4. pHYs
-  view.setUint32(p, 9, false); p += 4;
-  header.set(physData, p); p += physData.length;
-  view.setUint32(p, physCrc, false); p += 4;
-
-  // 5. tEXt
-  view.setUint32(p, textKeyword.length, false); p += 4;
-  header.set(textData, p); p += textData.length;
-  view.setUint32(p, textCrc, false); p += 4;
-
-  // 6. IDAT
-  view.setUint32(p, zlibStream.length, false); p += 4;
-  header.set([0x49, 0x44, 0x41, 0x54], p);
-  header.set(zlibStream, p + 4);
-  const idatCrc = calculateCrc32(header.subarray(p, p + 4 + zlibStream.length));
-  p += 4 + zlibStream.length;
-  view.setUint32(p, idatCrc, false); p += 4;
-
-  // 7. foRt ancillary private chunk header (length = payloadLength)
-  view.setUint32(p, payloadLength, false); p += 4;
-  header.set([0x66, 0x6F, 0x52, 0x74], p); p += 4;
-
-  return header;
-}
-
-/**
- * Generates a valid minimal JFIF JPEG image carrier header
- * When options.includeExif is true, inserts an authentic standard APP1 EXIF metadata block.
- * Ends with 0xFF 0xD9 (EOI). The cascade container is stored in trailing slack space.
- */
-export function createJpgCarrierHeader(options?: JpgCarrierOptions): Uint8Array {
-  const baseJpg = [
-    0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
-    0x00, 0x48, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
-    0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12,
-    0x13, 0x0F, 0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20, 0x24, 0x2E, 0x27, 0x20,
-    0x22, 0x2C, 0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29, 0x2C, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1F, 0x27,
-    0x39, 0x3D, 0x38, 0x32, 0x3C, 0x2E, 0x33, 0x34, 0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x08,
-    0x00, 0x08, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x1F, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01,
-    0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
-    0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0xFF, 0xC4, 0x00, 0xB5, 0x10, 0x00, 0x02, 0x01, 0x03,
-    0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00, 0x01, 0x7D, 0x01, 0x02, 0x03, 0x00,
-    0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07, 0x22, 0x71, 0x14, 0x32,
-    0x81, 0x91, 0xA1, 0x08, 0x23, 0x42, 0xB1, 0xC1, 0x15, 0x52, 0xD1, 0xF0, 0x24, 0x33, 0x62, 0x72,
-    0x82, 0x09, 0x0A, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x34, 0x35,
-    0x36, 0x37, 0x38, 0x39, 0x3A, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x53, 0x54, 0x55,
-    0x56, 0x57, 0x58, 0x59, 0x5A, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x73, 0x74, 0x75,
-    0x76, 0x77, 0x78, 0x79, 0x7A, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x92, 0x93, 0x94,
-    0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xB2,
-    0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9,
-    0xCA, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6,
-    0xE7, 0xE8, 0xE9, 0xEA, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFF, 0xDA,
-    0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x7F, 0x00, 0xFF, 0xD9
-  ];
-
-  if (!options?.includeExif) {
-    return new Uint8Array(baseJpg);
-  }
-
-  // Insert standard APP1 EXIF segment immediately after APP0 (at index 20)
-  const exifSegment = [
-    0xFF, 0xE1, // APP1 marker
-    0x00, 0x41, // length = 65 bytes
-    0x45, 0x78, 0x69, 0x66, 0x00, 0x00, // "Exif\0\0"
-    0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, // TIFF header (little endian "II", 42, IFD0 offset 8)
-    0x02, 0x00, // 2 directory entries
-    0x31, 0x01, 0x02, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x26, 0x00, 0x00, 0x00, // Tag 0x0131 (Software)
-    0x0F, 0x01, 0x02, 0x00, 0x07, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00, 0x00, // Tag 0x010F (Make)
-    0x00, 0x00, 0x00, 0x00, // Next IFD offset
-    0x46, 0x6F, 0x72, 0x74, 0x4B, 0x6E, 0x6F, 0x78, 0x20, 0x32, 0x00, 0x00, // "FortKnox 2\0\0" (12 bytes)
-    0x43, 0x61, 0x6D, 0x65, 0x72, 0x61, 0x00 // "Camera\0" (7 bytes)
-  ];
-
-  const fullJpg = new Uint8Array(baseJpg.length + exifSegment.length);
-  fullJpg.set(baseJpg.slice(0, 20), 0); // SOI + APP0
-  fullJpg.set(exifSegment, 20);         // APP1 EXIF
-  fullJpg.set(baseJpg.slice(20), 20 + exifSegment.length); // Remainder through FF D9
-  return fullJpg;
-}
 
 function writeBothEndianU32(view: DataView, offset: number, val: number): void {
   view.setUint32(offset, val, true);
@@ -1098,13 +867,13 @@ export function createMp4CarrierHeader(payloadLength: number, options?: Mp4Carri
 }
 
 /**
- * Detects whether an input file is a polyglot carrier (WAVE, PNG, JPEG, ISO-9660, or MP4),
+ * Detects whether an input file is a polyglot carrier (WAVE, ISO-9660, or MP4),
  * and if so, returns the exact byte offset where the encrypted container payload begins.
  */
 export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
   isCarrier: boolean;
   payloadOffset: number;
-  carrierType?: 'wav' | 'png' | 'jpg' | 'iso' | 'mp4';
+  carrierType?: 'wav' | 'iso' | 'mp4';
 } {
   if (fileStartBytes.length < 16) return { isCarrier: false, payloadOffset: 0 };
 
@@ -1149,48 +918,7 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
     return { isCarrier: false, payloadOffset: 0 };
   }
 
-  // 2. PNG Carrier
-  if (
-    fileStartBytes[0] === 0x89 && fileStartBytes[1] === 0x50 && fileStartBytes[2] === 0x4E && fileStartBytes[3] === 0x47 &&
-    fileStartBytes[4] === 0x0D && fileStartBytes[5] === 0x0A && fileStartBytes[6] === 0x1A && fileStartBytes[7] === 0x0A
-  ) {
-    let pos = 8;
-    const view = new DataView(fileStartBytes.buffer, fileStartBytes.byteOffset, fileStartBytes.byteLength);
-    while (pos + 8 <= fileStartBytes.length) {
-      const chunkLen = view.getUint32(pos, false);
-      const chunkType = String.fromCharCode(fileStartBytes[pos+4], fileStartBytes[pos+5], fileStartBytes[pos+6], fileStartBytes[pos+7]);
-      if (chunkType === 'foRt' || chunkType === 'ftKX' || chunkType === 'caSC') {
-        return { isCarrier: true, payloadOffset: pos + 8, carrierType: 'png' };
-      }
-      if (chunkType === 'IEND') {
-        const nextPos = pos + 12;
-        if (nextPos + 8 <= fileStartBytes.length) {
-          const nextType = String.fromCharCode(fileStartBytes[nextPos+4], fileStartBytes[nextPos+5], fileStartBytes[nextPos+6], fileStartBytes[nextPos+7]);
-          if (nextType === 'foRt' || nextType === 'ftKX' || nextType === 'caSC') {
-            return { isCarrier: true, payloadOffset: nextPos + 8, carrierType: 'png' };
-          }
-        }
-        return { isCarrier: true, payloadOffset: nextPos, carrierType: 'png' };
-      }
-      pos += 8 + chunkLen + 4;
-    }
-    return { isCarrier: false, payloadOffset: 0 };
-  }
-
-  // 3. JPEG Carrier
-  if (
-    fileStartBytes[0] === 0xFF && fileStartBytes[1] === 0xD8 && fileStartBytes[2] === 0xFF
-  ) {
-    // Scan for FF D9 (EOI) within first 4096 bytes
-    const limit = Math.min(fileStartBytes.length - 1, 4096);
-    for (let i = 2; i < limit; i++) {
-      if (fileStartBytes[i] === 0xFF && fileStartBytes[i+1] === 0xD9) {
-        return { isCarrier: true, payloadOffset: i + 2, carrierType: 'jpg' };
-      }
-    }
-  }
-
-  // 4. ISO-9660 Carrier (Sector 16 Primary Volume Descriptor with 'CD001' marker)
+  // 2. ISO-9660 Carrier (Sector 16 Primary Volume Descriptor with 'CD001' marker)
   if (fileStartBytes.length >= 32774) {
     const pvdOffset = 16 * 2048; // 32,768 (Sector 16)
     if (
@@ -1205,7 +933,7 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
     }
   }
 
-  // 5. MP4 / ISO Base Media File Format (ISO-BMFF) Carrier
+  // 3. MP4 / ISO Base Media File Format (ISO-BMFF) Carrier
   if (
     fileStartBytes.length >= 16 &&
     fileStartBytes[4] === 0x66 && // 'f'

@@ -20,8 +20,6 @@ import {
   BLIND_MAX_DELTA,
   deriveBlindPointerDelta,
   createWavCarrierHeader,
-  createPngCarrierHeader,
-  createJpgCarrierHeader,
   createIsoCarrierHeader,
   createMp4CarrierHeader,
   detectCarrierPayloadOffset,
@@ -441,8 +439,6 @@ async function executePoolEncryption(params: {
   crypto.getRandomValues(nonceAes);
 
   const isWavCarrier = Boolean(outputFileName && /\.wav$/i.test(outputFileName));
-  const isPngCarrier = Boolean(outputFileName && /\.png$/i.test(outputFileName));
-  const isJpgCarrier = Boolean(outputFileName && /\.(jpe?g)$/i.test(outputFileName));
   const isIsoCarrier = Boolean(outputFileName && /\.iso$/i.test(outputFileName));
   const isMp4Carrier = Boolean(outputFileName && /\.mp4$/i.test(outputFileName));
   const blindDelta = deriveBlindPointerDelta(k4, BLIND_MAX_DELTA);
@@ -465,15 +461,6 @@ async function executePoolEncryption(params: {
   let carrierHeader: Uint8Array | null = null;
   if (isWavCarrier) {
     carrierHeader = createWavCarrierHeader(totalContainerBytes);
-  } else if (isPngCarrier) {
-    const dim = totalContainerBytes > 50 * 1024 * 1024 ? 64 : (totalContainerBytes > 5 * 1024 * 1024 ? 32 : 16);
-    carrierHeader = createPngCarrierHeader(totalContainerBytes, {
-      width: dim,
-      height: dim,
-      includeAncillaryMetadata: true,
-    });
-  } else if (isJpgCarrier) {
-    carrierHeader = createJpgCarrierHeader({ includeExif: true });
   } else if (isIsoCarrier) {
     carrierHeader = createIsoCarrierHeader(totalContainerBytes);
   } else if (isMp4Carrier) {
@@ -804,7 +791,7 @@ async function executePoolEncryption(params: {
   return {
     type: 'SUCCESS',
     mode: 'ENCRYPT',
-    fileName: outputFileName || `${file.name}.fortknox`,
+    fileName: outputFileName || `${file.name}.bin`,
     originalSize,
     finalSize: totalBytes,
     totalTimeMs: Math.round(totalTimeMs),
@@ -847,7 +834,7 @@ async function executePoolDecryption(params: {
   const { file, workers, k1, k2, k4, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
   const fileSize = file.size;
 
-  // 1. Detect Polyglot Carrier header if present (WAVE, PNG, JPEG, ISO-9660, or MP4)
+  // 1. Detect Polyglot Carrier header if present (WAVE, ISO-9660, or MP4)
   const probeHeaderSlice = file.slice(0, Math.min(131072, fileSize));
   const probeHeaderBytes = new Uint8Array(await probeHeaderSlice.arrayBuffer());
   const carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
@@ -1179,7 +1166,7 @@ async function executePoolDecryption(params: {
   const totalTimeMs = performance.now() - startTime;
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);
 
-  const strippedName = file.name.replace(/\.(fortknox|dat|wav|png|jpe?g|bin|iso)$/i, '');
+  const strippedName = file.name.replace(/\.(bin|iso|wav|mp4)$/i, '');
   const restoredName = outputFileName || (strippedName !== file.name && strippedName.length > 0
     ? strippedName
     : `decrypted_${file.name.length > 0 ? file.name : 'file'}`);

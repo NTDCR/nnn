@@ -46,9 +46,12 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
 
   const [stealthExtension, setStealthExtension] = useState<string>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
-      return localStorage.getItem('sys_io_format_ext') || localStorage.getItem('fortknox_stealth_ext') || '.dat';
+      const saved = localStorage.getItem('sys_io_format_ext');
+      if (saved && ['.bin', '.iso', '.wav', '.mp4'].includes(saved)) {
+        return saved;
+      }
     }
-    return '.dat'; // Default stealth extension
+    return '.bin'; // Default 4-carrier standard extension
   });
 
   // Anti-Forensics: actively scrub legacy identifiable keys from browser LevelDB storage
@@ -270,9 +273,9 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     const safeRawName = baseRawName.replace(/\.part[-_]?\d+$/i, '');
     let targetFileName: string;
     if (action === 'ENCRYPT') {
-      targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : `${safeRawName}.dat`;
+      targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : `${safeRawName}.bin`;
     } else {
-      const stripped = safeRawName.replace(/\.(fortknox|dat|wav|png|jpe?g|bin|iso|mp4)$/i, '');
+      const stripped = safeRawName.replace(/\.(bin|iso|wav|mp4)$/i, '');
       if (stripped.length > 0 && stripped !== safeRawName) {
         targetFileName = stripped;
       } else {
@@ -639,22 +642,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               disabled={isProcessing}
               className="bg-transparent text-purple-200 font-mono text-[11px] outline-none cursor-pointer"
             >
-              <option value=".dat" className="bg-slate-900 text-slate-200">.dat (Raw Binary Data)</option>
-              <option value=".png" className="bg-slate-900 text-slate-200">.png (Valid PNG Image Polyglot)</option>
-              <option value=".jpg" className="bg-slate-900 text-slate-200">.jpg (Valid JPEG Image Polyglot)</option>
-              <option value=".mp4" className="bg-slate-900 text-slate-200">.mp4 (MP4 Video Polyglot - Cloud &amp; Mobile)</option>
-              <option value=".wav" className="bg-slate-900 text-slate-200">.wav (Playable Audio Polyglot)</option>
-              <option value=".bin" className="bg-slate-900 text-slate-200">.bin (Memory Image)</option>
+              <option value=".bin" className="bg-slate-900 text-slate-200">.bin (High-Entropy Binary Container)</option>
               <option value=".iso" className="bg-slate-900 text-slate-200">.iso (ISO-9660 Disc Polyglot &gt;1GB)</option>
-              <option value=".fortknox" className="bg-slate-900 text-slate-200">.fortknox (Standard)</option>
+              <option value=".wav" className="bg-slate-900 text-slate-200">.wav (Playable Audio Polyglot)</option>
+              <option value=".mp4" className="bg-slate-900 text-slate-200">.mp4 (MP4 Video Polyglot - Cloud &amp; Mobile)</option>
             </select>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/70 border border-purple-800/60 text-purple-300 font-mono hidden lg:inline-flex items-center gap-1">
-            {stealthExtension === '.png'
-              ? 'PNG Image Polyglot Active • Displays in Photo Viewers'
-              : stealthExtension === '.jpg'
-              ? 'JPEG Photo Polyglot Active • Displays in Photo Viewers'
-              : stealthExtension === '.mp4'
+            {stealthExtension === '.mp4'
               ? 'MP4 Video Polyglot Active • Displays in Media Players'
               : stealthExtension === '.wav'
               ? 'Audio Polyglot Active • Plays in Media Players'
