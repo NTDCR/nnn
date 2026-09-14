@@ -240,7 +240,7 @@ export function calculateShannonMetrics(data: Uint8Array): {
  * Exact fixed-slot size for 1 MB ciphertext chunk (1,048,608 bytes) shaped to ~6.90 b/B.
  * 1,216,512 bytes is 16-byte aligned and provides deterministic O(1) random-access seeking.
  */
-export const FIXED_SHAPED_CHUNK_SIZE = 1216512;
+export const FIXED_SHAPED_CHUNK_SIZE = 1219200;
 
 export function shapeChunkFixed(encChunk: Uint8Array): Uint8Array {
   const shaped = shapeCiphertext(encChunk);
