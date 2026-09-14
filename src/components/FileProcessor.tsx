@@ -629,7 +629,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               <option value=".jpg" className="bg-slate-900 text-slate-200">.jpg (Valid JPEG Image Polyglot)</option>
               <option value=".wav" className="bg-slate-900 text-slate-200">.wav (Playable Audio Polyglot)</option>
               <option value=".bin" className="bg-slate-900 text-slate-200">.bin (Memory Image)</option>
-              <option value=".iso" className="bg-slate-900 text-slate-200">.iso (Disk Image)</option>
+              <option value=".iso" className="bg-slate-900 text-slate-200">.iso (ISO-9660 Disc Polyglot &gt;1GB)</option>
               <option value=".fortknox" className="bg-slate-900 text-slate-200">.fortknox (Standard)</option>
             </select>
           </div>
@@ -640,6 +640,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               ? 'JPEG Photo Polyglot Active • Displays in Photo Viewers'
               : stealthExtension === '.wav'
               ? 'Audio Polyglot Active • Plays in Media Players'
+              : stealthExtension === '.iso'
+              ? 'ISO-9660 Virtual Disc Polyglot • Mounts in Windows Explorer'
               : 'Blind Pointer Offset • Modulo Annihilated • 0 Magic Bytes'}
           </span>
         </div>

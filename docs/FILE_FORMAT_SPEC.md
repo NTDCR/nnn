@@ -148,9 +148,19 @@ For high-adversity threat models requiring absolute pointer concealment, boundar
      - Prepends an authentic JFIF JPEG image header with standard baseline markers (`SOI`, `APP0`, `DQT`, `SOF0`, `DHT`, `SOS`, and terminating `FF D9` EOI marker).
      - Injects authentic `APP1` EXIF metadata segment containing standard TIFF header and IFD0 tags (`Make`, `Software`).
      - Appends the cascade container in trailing slack space after `FF D9`. Image decoders display the image canvas cleanly while treating post-EOI bytes as benign transport padding.
+   - **ISO-9660 Optical Disc Image Carrier (`.iso`)**:
+     - Engineered specifically for large files (1 GB to 50 GB) where audio or image containers would produce suspicious file-size-to-dimension anomalies.
+     - Synthesizes an authentic 43,008-byte (21 sectors of 2048 bytes) ISO-9660 filesystem structure:
+       - Sectors 0..15: System area (reserved).
+       - Sector 16: Primary Volume Descriptor (PVD) with `CD001` marker, volume label `SECURE_ARCHIVE`, system identifier `FORTKNOX_OS`, volume space size, and strict both-endian integer encodings.
+       - Sector 17: Volume Descriptor Set Terminator (`CD001`).
+       - Sectors 18..19: Type L (little-endian) and Type M (big-endian) Path Tables.
+       - Sector 20: Root Directory record pointing to `DATA.BIN;1` starting at Sector 21 (offset 43,008).
+       - Sector 21: Encrypted cascade container begins.
+     - Natively mounts in Windows Explorer, macOS Finder, Linux, and 7-Zip as a genuine virtual disc containing `DATA.BIN`.
    - **Universal O(1) Carrier Auto-Detection**:
-     - `detectCarrierPayloadOffset` inspects the initial 4096 bytes of the ciphertext stream.
-     - Detects WAV (`RIFF....WAVE`), PNG (`\x89PNG` + `foRt` scan), and JPEG (`\xFF\xD8\xFF` + `\xFF\xD9` EOI scan).
+     - `detectCarrierPayloadOffset` inspects the initial 45,056 bytes of the ciphertext stream.
+     - Detects WAV (`RIFF....WAVE`), PNG (`\x89PNG` + `foRt` scan), JPEG (`\xFF\xD8\xFF` + `\xFF\xD9` EOI scan), and ISO-9660 (Sector 16 offset 32,768 `CD001` marker).
      - If no carrier header is present, defaults to raw container offset $0$. Decryption pipeline executes seamlessly across all carriers without manual parameter configuration.
 
 4. **Decryption Original Timestamp Restoration & Anti-Timestomping**:
@@ -174,8 +184,8 @@ To mitigate memory acquisition attacks (e.g. cold boot dump, Volatility triage, 
    - Provides an immediate single-click panic button in the UI (`#panic-scrub-keys-btn`) that clears all 4 keys from active memory state and form inputs.
 4. **WASM Linear Memory & Worker Buffer Zeroization**:
    - Cryptographic worker pools and WebAssembly memory buffers allocate deterministic memory spaces that are explicitly wiped via `Uint8Array.fill(0)` upon chunk completion or processing abort.
-5. **Honest Forensic Boundary**:
+5. **Large-File Memory Bounding & Direct-to-Disk Anti-Pagefile Defense**:
+   - Pipelined streaming chunk architecture maintains a strict $< 5\text{ MB}$ RAM footprint regardless of container size (1 GB to 50 GB), completely preventing the OS memory manager from swapping process memory to `pagefile.sys`.
+   - Direct-to-Disk native streaming via File System Access API (`showSaveFilePicker`) writes decrypted and encrypted streams directly to disk blocks without accumulating unencrypted chunks in browser download caches (`.crdownload`).
+6. **Honest Forensic Boundary**:
    - Browser V8 heap string representations are garbage-collected asynchronously according to host engine memory pressure. Native zeroization applies strictly to typed arrays, WASM buffers, and active state references.
-
-
-

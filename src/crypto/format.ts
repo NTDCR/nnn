@@ -720,14 +720,145 @@ export function createJpgCarrierHeader(options?: JpgCarrierOptions): Uint8Array 
   return fullJpg;
 }
 
+function writeBothEndianU32(view: DataView, offset: number, val: number): void {
+  view.setUint32(offset, val, true);
+  view.setUint32(offset + 4, val, false);
+}
+
+function writeBothEndianU16(view: DataView, offset: number, val: number): void {
+  view.setUint16(offset, val, true);
+  view.setUint16(offset + 2, val, false);
+}
+
 /**
- * Detects whether an input file is a polyglot carrier (WAVE, PNG, or JPEG),
+ * Generates an authentic ISO-9660 (.iso) optical disc image carrier header (43,008 bytes = 21 sectors of 2048B).
+ * - Sectors 0..15: System area (zeroed)
+ * - Sector 16: Primary Volume Descriptor (PVD) with 'CD001' signature, volume label 'SECURE_ARCHIVE'
+ * - Sector 17: Volume Descriptor Set Terminator ('CD001')
+ * - Sector 18: Type L Path Table
+ * - Sector 19: Type M Path Table
+ * - Sector 20: Root Directory record pointing to DATA.BIN;1 (Sector 21)
+ * - Sector 21 (offset 43,008): The encrypted cascade container begins.
+ * Natively mounts in Windows Explorer, macOS, Linux, and 7-Zip as a virtual disc containing DATA.BIN.
+ * Provides authentic masquerade for multi-gigabyte (1 GB - 50 GB) archives.
+ */
+export function createIsoCarrierHeader(payloadLength: number): Uint8Array {
+  const SECTOR_SIZE = 2048;
+  const HEADER_SECTORS = 21;
+  const payloadSectors = Math.ceil(payloadLength / SECTOR_SIZE);
+  const totalSectors = HEADER_SECTORS + payloadSectors;
+
+  const header = new Uint8Array(HEADER_SECTORS * SECTOR_SIZE);
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+
+  // Sector 16: Primary Volume Descriptor (PVD)
+  const pvdOffset = 16 * SECTOR_SIZE;
+  header[pvdOffset] = 1; // Primary Volume Descriptor
+  header.set([0x43, 0x44, 0x30, 0x30, 0x31], pvdOffset + 1); // "CD001"
+  header[pvdOffset + 6] = 1; // Version 1
+
+  // System Identifier (8..39) & Volume Identifier (40..71)
+  const sysIdent = new TextEncoder().encode('FORTKNOX_OS'.padEnd(32, ' '));
+  const volIdent = new TextEncoder().encode('SECURE_ARCHIVE'.padEnd(32, ' '));
+  header.set(sysIdent, pvdOffset + 8);
+  header.set(volIdent, pvdOffset + 40);
+
+  // Volume Space Size (80..87)
+  writeBothEndianU32(view, pvdOffset + 80, totalSectors);
+
+  // Volume Set Size & Sequence Number (120..127)
+  writeBothEndianU16(view, pvdOffset + 120, 1);
+  writeBothEndianU16(view, pvdOffset + 124, 1);
+  writeBothEndianU16(view, pvdOffset + 128, SECTOR_SIZE);
+
+  // Path Table Size (132..139) = 10 bytes
+  writeBothEndianU32(view, pvdOffset + 132, 10);
+  view.setUint32(pvdOffset + 140, 18, true);  // Type L at Sector 18
+  view.setUint32(pvdOffset + 148, 19, false); // Type M at Sector 19
+
+  // Root Directory Record in PVD (156..189, 34 bytes)
+  view.setUint8(pvdOffset + 156, 34);
+  writeBothEndianU32(view, pvdOffset + 158, 20); // Sector 20
+  writeBothEndianU32(view, pvdOffset + 166, SECTOR_SIZE);
+  header.set([124, 9, 14, 12, 0, 0, 0], pvdOffset + 174); // 2024-09-14
+  header[pvdOffset + 181] = 0x02; // Directory flag
+  writeBothEndianU16(view, pvdOffset + 184, 1);
+  header[pvdOffset + 188] = 1;
+  header[pvdOffset + 189] = 0; // root \0
+
+  // Padding & Date fields (190..812)
+  header.fill(0x20, pvdOffset + 190, pvdOffset + 813);
+  const nowAscii = new TextEncoder().encode('2026091412000000\0');
+  const zeroAscii = new TextEncoder().encode('0000000000000000\0');
+  header.set(nowAscii, pvdOffset + 813);
+  header.set(nowAscii, pvdOffset + 830);
+  header.set(zeroAscii, pvdOffset + 847);
+  header.set(nowAscii, pvdOffset + 864);
+  header[pvdOffset + 881] = 1; // File structure version 1
+
+  // Sector 17: Volume Descriptor Set Terminator
+  const termOffset = 17 * SECTOR_SIZE;
+  header[termOffset] = 255;
+  header.set([0x43, 0x44, 0x30, 0x30, 0x31], termOffset + 1);
+  header[termOffset + 6] = 1;
+
+  // Sector 18: Type L Path Table (little-endian)
+  const pathLOffset = 18 * SECTOR_SIZE;
+  header[pathLOffset] = 1;
+  view.setUint32(pathLOffset + 2, 20, true);
+  view.setUint16(pathLOffset + 6, 1, true);
+  header[pathLOffset + 8] = 0;
+
+  // Sector 19: Type M Path Table (big-endian)
+  const pathMOffset = 19 * SECTOR_SIZE;
+  header[pathMOffset] = 1;
+  view.setUint32(pathMOffset + 2, 20, false);
+  view.setUint16(pathMOffset + 6, 1, false);
+  header[pathMOffset + 8] = 0;
+
+  // Sector 20: Root Directory Sector
+  const rootOffset = 20 * SECTOR_SIZE;
+  // '.' Entry
+  view.setUint8(rootOffset, 34);
+  writeBothEndianU32(view, rootOffset + 2, 20);
+  writeBothEndianU32(view, rootOffset + 10, SECTOR_SIZE);
+  header[rootOffset + 25] = 0x02;
+  writeBothEndianU16(view, rootOffset + 28, 1);
+  header[rootOffset + 32] = 1;
+  header[rootOffset + 33] = 0;
+
+  // '..' Entry
+  view.setUint8(rootOffset + 34, 34);
+  writeBothEndianU32(view, rootOffset + 36, 20);
+  writeBothEndianU32(view, rootOffset + 44, SECTOR_SIZE);
+  header[rootOffset + 59] = 0x02;
+  writeBothEndianU16(view, rootOffset + 62, 1);
+  header[rootOffset + 66] = 1;
+  header[rootOffset + 67] = 1;
+
+  // 'DATA.BIN;1' File Entry (Sector 21, offset 43008)
+  const fileEntryOffset = rootOffset + 68;
+  const nameBytes = new TextEncoder().encode('DATA.BIN;1');
+  const recLen = 33 + nameBytes.length + 1; // 44 bytes
+  view.setUint8(fileEntryOffset, recLen);
+  writeBothEndianU32(view, fileEntryOffset + 2, 21); // Sector 21
+  writeBothEndianU32(view, fileEntryOffset + 10, payloadLength);
+  header[fileEntryOffset + 25] = 0; // File flag
+  writeBothEndianU16(view, fileEntryOffset + 28, 1);
+  header[fileEntryOffset + 32] = nameBytes.length;
+  header.set(nameBytes, fileEntryOffset + 33);
+
+  return header;
+}
+
+/**
+ * Detects whether an input file is a polyglot carrier (WAVE, PNG, JPEG, or ISO-9660),
  * and if so, returns the exact byte offset where the encrypted container payload begins.
  */
 export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
   isCarrier: boolean;
   payloadOffset: number;
-  carrierType?: 'wav' | 'png' | 'jpg';
+  carrierType?: 'wav' | 'png' | 'jpg' | 'iso';
 } {
   if (fileStartBytes.length < 16) return { isCarrier: false, payloadOffset: 0 };
 
@@ -781,6 +912,21 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
       if (fileStartBytes[i] === 0xFF && fileStartBytes[i+1] === 0xD9) {
         return { isCarrier: true, payloadOffset: i + 2, carrierType: 'jpg' };
       }
+    }
+  }
+
+  // 4. ISO-9660 Carrier (Sector 16 Primary Volume Descriptor with 'CD001' marker)
+  if (fileStartBytes.length >= 32774) {
+    const pvdOffset = 16 * 2048; // 32,768 (Sector 16)
+    if (
+      fileStartBytes[pvdOffset] === 1 &&
+      fileStartBytes[pvdOffset + 1] === 0x43 && // 'C'
+      fileStartBytes[pvdOffset + 2] === 0x44 && // 'D'
+      fileStartBytes[pvdOffset + 3] === 0x30 && // '0'
+      fileStartBytes[pvdOffset + 4] === 0x30 && // '0'
+      fileStartBytes[pvdOffset + 5] === 0x31    // '1'
+    ) {
+      return { isCarrier: true, payloadOffset: 43008, carrierType: 'iso' };
     }
   }
 

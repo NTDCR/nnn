@@ -22,6 +22,7 @@ import {
   createWavCarrierHeader,
   createPngCarrierHeader,
   createJpgCarrierHeader,
+  createIsoCarrierHeader,
   detectCarrierPayloadOffset,
 } from '../crypto/format.ts';
 import { hmac } from '@noble/hashes/hmac.js';
@@ -441,6 +442,7 @@ async function executePoolEncryption(params: {
   const isWavCarrier = Boolean(outputFileName && /\.wav$/i.test(outputFileName));
   const isPngCarrier = Boolean(outputFileName && /\.png$/i.test(outputFileName));
   const isJpgCarrier = Boolean(outputFileName && /\.(jpe?g)$/i.test(outputFileName));
+  const isIsoCarrier = Boolean(outputFileName && /\.iso$/i.test(outputFileName));
   const blindDelta = deriveBlindPointerDelta(k4, BLIND_MAX_DELTA);
 
   // Pre-metadata jitter: 1 KB to 16 KB CSPRNG noise to obliterate fixed chunk-to-metadata boundary
@@ -470,6 +472,8 @@ async function executePoolEncryption(params: {
     });
   } else if (isJpgCarrier) {
     carrierHeader = createJpgCarrierHeader({ includeExif: true });
+  } else if (isIsoCarrier) {
+    carrierHeader = createIsoCarrierHeader(totalContainerBytes);
   }
   const totalBytes = (carrierHeader ? carrierHeader.length : 0) + totalContainerBytes;
   onStart?.(chunkCount, totalBytes);
@@ -839,8 +843,8 @@ async function executePoolDecryption(params: {
   const { file, workers, k1, k2, k4, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
   const fileSize = file.size;
 
-  // 1. Detect Polyglot Carrier header if present (WAVE, PNG, or JPEG)
-  const probeHeaderSlice = file.slice(0, Math.min(4096, fileSize));
+  // 1. Detect Polyglot Carrier header if present (WAVE, PNG, JPEG, or ISO-9660)
+  const probeHeaderSlice = file.slice(0, Math.min(45056, fileSize));
   const probeHeaderBytes = new Uint8Array(await probeHeaderSlice.arrayBuffer());
   const carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
   const payloadStartOffset = carrierInfo.isCarrier ? carrierInfo.payloadOffset : 0;
