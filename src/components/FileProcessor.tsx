@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { CascadeKeys, WorkerProgressMessage, WorkerSuccessMessage } from '../types/crypto.ts';
 import { processFileWithPool } from '../workers/cascadePool.ts';
 import { CompositeFileReader } from '../crypto/compositeReader.ts';
+import { createStreamDownloadSession, StreamDownloadSession } from '../crypto/streamDownloadClient.ts';
 import { ProgressBar } from './ProgressBar.tsx';
 import {
   FileCode,
@@ -29,17 +30,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
   const [useDirectDiskWrite, setUseDirectDiskWrite] = useState<boolean>(true);
   const [downloadBlobUrl, setDownloadBlobUrl] = useState<string | null>(null);
   const [streamedDirectToDisk, setStreamedDirectToDisk] = useState<boolean>(false);
-  const [downloadedPartsCount, setDownloadedPartsCount] = useState<number>(0);
-  const [chunkPartSizeMb, setChunkPartSizeMb] = useState<10 | 25 | 50 | 100>(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const saved = localStorage.getItem('fortknox_chunk_part_size');
-      if (saved === '10') return 10;
-      if (saved === '25') return 25;
-      if (saved === '50') return 50;
-      if (saved === '100') return 100;
-    }
-    return 25;
-  });
+  const [streamedToDownloads, setStreamedToDownloads] = useState<boolean>(false);
   const [coreMode, setCoreMode] = useState<'auto' | 'webgpu' | 2 | 4 | 6 | 8>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
       const saved = localStorage.getItem('fortknox_core_mode');
@@ -246,9 +237,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     setError(null);
     setResult(null);
     setStreamedDirectToDisk(false);
-    setDownloadedPartsCount(0);
+    setStreamedToDownloads(false);
     clearDownloadUrl();
-    currentPartChunksRef.current = [];
     writableStreamRef.current = null;
 
     // Output target naming
@@ -280,13 +270,34 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         if ((pickerErr as { name?: string })?.name === 'AbortError') {
           return;
         }
-        console.warn('Falling back to safe chunked streaming:', pickerErr);
+        console.warn('Direct disk stream picker cancelled or unsupported, falling back to stream download:', pickerErr);
         setStreamedDirectToDisk(false);
       }
     }
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+
+    let streamSession: StreamDownloadSession | null = null;
+    let memoryChunks: Uint8Array[] = [];
+
+    // If not streaming direct to disk via File System Access API, stream via Service Worker download
+    if (!writableStreamRef.current) {
+      const estimatedTotalSize =
+        action === 'ENCRYPT'
+          ? Math.ceil(inputSource.size / (1024 * 1024)) * 1048608 + 512 + 32
+          : undefined;
+
+      streamSession = await createStreamDownloadSession({
+        filename: targetFileName,
+        totalSize: estimatedTotalSize,
+        signal: abortController.signal,
+      });
+
+      if (streamSession) {
+        setStreamedToDownloads(true);
+      }
+    }
 
     setIsProcessing(true);
     await acquireWakeLock();
@@ -323,18 +334,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       }
     };
 
-    // Safe chunked part streaming emitter:
-    // Strictly bounds memory to chunkPartSizeMb chunks in RAM.
-    const PART_CHUNKS_LIMIT = Math.max(1, chunkPartSizeMb);
-    let currentPartIndex = 1;
-    let partsEmitted = 0;
-
-    const emitPartDownload = (chunks: Uint8Array[], fileName: string) => {
-      const blob = new Blob(chunks, { type: 'application/octet-stream' });
-      const url = URL.createObjectURL(blob);
-      activeBlobUrlsRef.current.add(url);
-      setDownloadBlobUrl(url);
-
+    const triggerSingleDownload = (url: string, fileName: string) => {
       const anchor = document.createElement('a');
       anchor.href = url;
       anchor.download = fileName;
@@ -396,18 +396,11 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             if (diskBufferedBytes >= 4 * 1024 * 1024) {
               await flushDiskBuffer();
             }
+          } else if (streamSession) {
+            await streamSession.write(chunkBytes);
+            chunkBytes.fill(0);
           } else {
-            currentPartChunksRef.current.push(chunkBytes);
-            if (currentPartChunksRef.current.length >= PART_CHUNKS_LIMIT) {
-              const partName = `${targetFileName}.part${String(currentPartIndex).padStart(3, '0')}`;
-              emitPartDownload(currentPartChunksRef.current, partName);
-              partsEmitted++;
-              for (const c of currentPartChunksRef.current) {
-                c.fill(0);
-              }
-              currentPartChunksRef.current = [];
-              currentPartIndex++;
-            }
+            memoryChunks.push(chunkBytes);
           }
         },
         signal: abortController.signal,
@@ -419,20 +412,19 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
           await writableStreamRef.current.close();
         }
         writableStreamRef.current = null;
-      } else {
-        if (currentPartChunksRef.current.length > 0) {
-          const finalName =
-            action === 'DECRYPT' && partsEmitted === 0
-              ? targetFileName
-              : `${targetFileName}.part${String(currentPartIndex).padStart(3, '0')}`;
-          emitPartDownload(currentPartChunksRef.current, finalName);
-          partsEmitted++;
-          for (const c of currentPartChunksRef.current) {
-            c.fill(0);
-          }
-          currentPartChunksRef.current = [];
+      } else if (streamSession) {
+        await streamSession.close();
+        streamSession = null;
+      } else if (memoryChunks.length > 0) {
+        const blob = new Blob(memoryChunks, { type: 'application/octet-stream' });
+        for (const c of memoryChunks) {
+          c.fill(0);
         }
-        setDownloadedPartsCount(partsEmitted);
+        memoryChunks = [];
+        const url = URL.createObjectURL(blob);
+        activeBlobUrlsRef.current.add(url);
+        setDownloadBlobUrl(url);
+        triggerSingleDownload(url, targetFileName);
       }
 
       setResult(res);
@@ -447,15 +439,23 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         }
         writableStreamRef.current = null;
       }
+      if (streamSession) {
+        try {
+          await streamSession.abort(err instanceof Error ? err.message : String(err));
+        } catch {
+          // Ignore
+        }
+        streamSession = null;
+      }
       for (const c of diskWriteBuffer) {
         c.fill(0);
       }
       diskWriteBuffer = [];
       diskBufferedBytes = 0;
-      for (const c of currentPartChunksRef.current) {
+      for (const c of memoryChunks) {
         c.fill(0);
       }
-      currentPartChunksRef.current = [];
+      memoryChunks = [];
       setIsProcessing(false);
       setProgress(null);
 
@@ -543,11 +543,11 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             </select>
           </div>
 
-          {/* Disk streaming toggle or Safe Chunked Streaming indicator */}
+          {/* Disk streaming toggle or Safe Streamed Download indicator */}
           {hasFileSystemAccess ? (
             <label
               className="flex items-center gap-2 cursor-pointer text-xs text-slate-300"
-              title="Checked: Saves single file directly on disk via File System Access API. Unchecked: Streams safely in chunk parts with zero RAM overflow (never crashes)."
+              title="Checked: Saves single file directly on disk via File System Access API. Unchecked: Streams single file directly into your Downloads folder via Service Worker (zero RAM overflow)."
             >
               <input
                 type="checkbox"
@@ -564,41 +564,10 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
           ) : (
             <div
               className="flex items-center gap-1.5 text-xs text-emerald-300/90 font-mono bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-800/50"
-              title="Streams chunks safely to your Downloads folder in bounded parts with zero RAM accumulation (uncapped file size)."
+              title="Streams single file safely to your Downloads folder via Service Worker (uncapped file size, zero RAM accumulation)."
             >
               <Download className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span>Safe Chunked Streaming</span>
-            </div>
-          )}
-
-          {/* Part Size selector for chunked streaming */}
-          {(!hasFileSystemAccess || !useDirectDiskWrite) && (
-            <div
-              className="flex items-center gap-1.5 text-xs text-amber-300 font-mono bg-amber-950/40 px-2.5 py-1 rounded-lg border border-amber-800/50"
-              title="Chunk part size for streaming downloads (prevents browser RAM exhaustion / Aw Snap crashes)"
-            >
-              <span className="text-slate-400 text-[10px]">Part Size:</span>
-              <select
-                value={chunkPartSizeMb}
-                onChange={(e) => {
-                  const val = Number(e.target.value) as 10 | 25 | 50 | 100;
-                  setChunkPartSizeMb(val);
-                  try {
-                    if (typeof window !== 'undefined' && window.localStorage) {
-                      localStorage.setItem('fortknox_chunk_part_size', String(val));
-                    }
-                  } catch {
-                    // Ignore storage quota
-                  }
-                }}
-                disabled={isProcessing}
-                className="bg-transparent text-amber-300 font-mono text-[11px] outline-none cursor-pointer"
-              >
-                <option value="10" className="bg-slate-900 text-slate-200">10 MB (Ultra-Safe)</option>
-                <option value="25" className="bg-slate-900 text-slate-200">25 MB (Balanced)</option>
-                <option value="50" className="bg-slate-900 text-slate-200">50 MB (Fast)</option>
-                <option value="100" className="bg-slate-900 text-slate-200">100 MB (Max)</option>
-              </select>
+              <span>Safe Streamed Download</span>
             </div>
           )}
         </div>
@@ -702,7 +671,6 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               <span className="text-slate-400 block text-[10px]">Output File:</span>
               <strong className="text-white truncate block">
                 {result.fileName}
-                {downloadedPartsCount > 1 ? ` (${downloadedPartsCount} parts)` : ''}
               </strong>
             </div>
             <div>
@@ -715,19 +683,11 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             </div>
           </div>
 
-          {downloadedPartsCount > 1 ? (
+          {streamedToDownloads && (
             <div className="mt-2 pt-2 border-t border-emerald-900/50 text-[11px] font-mono text-emerald-200/90">
-              💡 <strong>Downloaded in {downloadedPartsCount} safe parts</strong> ({chunkPartSizeMb} MB per part, zero RAM overflow).
-              To decrypt, drop all {downloadedPartsCount} parts into Fort-Knox, or combine offline using:
-              <code className="block mt-1 p-1 bg-emerald-950/80 rounded text-emerald-300">
-                copy /b {result.fileName}.part* {result.fileName} (Windows)
-              </code>
+              💡 <strong>Streamed safely to your Downloads folder as 1 complete file</strong> (zero RAM overflow).
             </div>
-          ) : downloadedPartsCount === 1 && !streamedDirectToDisk ? (
-            <div className="mt-2 pt-2 border-t border-emerald-900/50 text-[11px] font-mono text-emerald-200/90">
-              💡 <strong>Streamed safely in 1 chunk part</strong> ({chunkPartSizeMb} MB limit, zero RAM overflow).
-            </div>
-          ) : null}
+          )}
 
           {downloadBlobUrl && (
             <div className="mt-3 pt-3 border-t border-emerald-900/50 flex flex-wrap items-center justify-between gap-2">
