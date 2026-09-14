@@ -46,16 +46,17 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
 
   const [antiForensicMode, setAntiForensicMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
-      return localStorage.getItem('fortknox_antiforensic') === 'true';
+      const saved = localStorage.getItem('fortknox_antiforensic');
+      if (saved !== null) return saved === 'true';
     }
-    return false;
+    return true; // Default to ON always
   });
 
   const [stealthExtension, setStealthExtension] = useState<string>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
-      return localStorage.getItem('fortknox_stealth_ext') || '.fortknox';
+      return localStorage.getItem('fortknox_stealth_ext') || '.dat';
     }
-    return '.fortknox';
+    return '.dat'; // Default stealth extension
   });
 
   const abortControllerRef = useRef<AbortController | null>(null);
