@@ -20,19 +20,19 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) 
     : (progress.currentChunk === progress.totalChunks ? 100 : 0);
 
   return (
-    <div id="cascade-progress-card" className="rounded-xl bg-slate-900 border border-slate-800 p-5 shadow-xl">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2">
+    <div id="cascade-progress-card" className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 sm:p-5 shadow-xl">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5 sm:mb-3">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="h-2.5 w-2.5 rounded-full bg-indigo-500 animate-ping" />
-          <span className="text-sm font-semibold text-white capitalize">
+          <span className="text-xs sm:text-sm font-semibold text-white capitalize">
             {progress.phase.toLowerCase()}...
           </span>
-          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-indigo-300 font-mono">
+          <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-full bg-slate-800 text-indigo-300 font-mono">
             Chunk {progress.currentChunk} of {progress.totalChunks}
           </span>
         </div>
 
-        <div className="flex items-center gap-3 text-xs font-mono text-slate-400">
+        <div className="flex items-center justify-between sm:justify-end gap-3 text-xs font-mono text-slate-400">
           <span className="flex items-center gap-1">
             <Gauge className="w-3.5 h-3.5 text-emerald-400" />
             <strong className="text-emerald-400 font-semibold">{progress.speedMBs}</strong> MB/s
@@ -44,7 +44,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) 
           {onCancel && (
             <button
               onClick={onCancel}
-              className="text-xs text-rose-400 hover:text-rose-300 hover:underline cursor-pointer"
+              className="px-2 py-0.5 rounded bg-rose-950/60 border border-rose-800/80 text-xs text-rose-300 hover:text-rose-200 transition active:scale-95 cursor-pointer font-sans font-semibold"
             >
               Abort
             </button>

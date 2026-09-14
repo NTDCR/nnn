@@ -498,25 +498,25 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
   const totalSelectedBytes = selectedFiles.reduce((acc, f) => acc + f.size, 0);
 
   return (
-    <div id="file-processor-card" className="rounded-2xl bg-slate-900/90 border border-slate-800 p-5 md:p-6 shadow-xl backdrop-blur-sm">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
+    <div id="file-processor-card" className="rounded-2xl bg-slate-900/90 border border-slate-800 p-3.5 sm:p-5 md:p-6 shadow-xl backdrop-blur-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 sm:pb-4 border-b border-slate-800/80">
         <div>
-          <h2 className="text-base font-semibold text-white flex items-center gap-2">
+          <h2 className="text-sm sm:text-base font-semibold text-white flex items-center gap-2">
             <Lock className="w-4 h-4 text-indigo-400" />
-            Fort-Knox Cascade File Processor
+            <span>Cascade File Processor</span>
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            4-Layer Cascaded Streaming Architecture with Uncapped File Sizes
+          <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
+            4-Layer Cascaded Streaming with Uncapped File Sizes
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
           {/* Multi-core CPU Concurrency Selector */}
           <div
-            className="flex items-center gap-1.5 text-xs text-indigo-300 font-mono bg-indigo-950/40 px-2.5 py-1 rounded-lg border border-indigo-800/50"
+            className="flex items-center justify-between sm:justify-start gap-1.5 text-xs text-indigo-300 font-mono bg-indigo-950/40 px-2.5 py-1.5 sm:py-1 rounded-lg border border-indigo-800/50"
             title="Multi-core CPU Thread Dispatcher"
           >
-            <span className="text-slate-400 text-[10px]">P-Cores:</span>
+            <span className="text-slate-400 text-[10px] sm:text-[10px]">P-Cores:</span>
             <select
               value={coreMode}
               onChange={(e) => {
@@ -534,19 +534,19 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               disabled={isProcessing}
               className="bg-transparent text-indigo-300 font-mono text-[11px] outline-none cursor-pointer"
             >
-              <option value="auto" className="bg-slate-900 text-slate-200">Auto (Strict P-Cores Only)</option>
-              <option value="webgpu" className="bg-slate-900 text-slate-200">WebGPU (Multi-Core CPU Fallback)</option>
-              <option value="2" className="bg-slate-900 text-slate-200">2 P-Cores (Dual P-Core / Mobile Big.LITTLE)</option>
-              <option value="4" className="bg-slate-900 text-slate-200">4 P-Cores (Quad P-Core)</option>
-              <option value="6" className="bg-slate-900 text-slate-200">6 P-Cores (Hexa P-Core)</option>
-              <option value="8" className="bg-slate-900 text-slate-200">8 P-Cores (Octa P-Core Ultra)</option>
+              <option value="auto" className="bg-slate-900 text-slate-200">Auto (Strict P-Cores)</option>
+              <option value="webgpu" className="bg-slate-900 text-slate-200">WebGPU (Multi-Core)</option>
+              <option value="2" className="bg-slate-900 text-slate-200">2 Cores (Mobile)</option>
+              <option value="4" className="bg-slate-900 text-slate-200">4 Cores (Quad)</option>
+              <option value="6" className="bg-slate-900 text-slate-200">6 Cores (Hexa)</option>
+              <option value="8" className="bg-slate-900 text-slate-200">8 Cores (Octa)</option>
             </select>
           </div>
 
           {/* Disk streaming toggle or Safe Streamed Download indicator */}
           {hasFileSystemAccess ? (
             <label
-              className="flex items-center gap-2 cursor-pointer text-xs text-slate-300"
+              className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 px-1 py-1"
               title="Checked: Saves single file directly on disk via File System Access API. Unchecked: Streams single file directly into your Downloads folder via Service Worker (zero RAM overflow)."
             >
               <input
@@ -573,13 +573,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         </div>
       </div>
 
-      {/* Drag & Drop Target */}
+      {/* Drag & Drop Target - Mobile-optimized tap target */}
       <div
         id="file-drop-zone"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`mt-5 relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 sm:p-8 text-center transition-all ${
+        className={`mt-4 sm:mt-5 relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-5 sm:p-8 text-center transition-all ${
           isDragging
             ? 'border-indigo-500 bg-indigo-950/20'
             : 'border-slate-800 bg-slate-950/50 hover:border-slate-700'
@@ -597,40 +597,40 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
           className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
         />
 
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-slate-300 mb-3 shadow-inner">
-          <FileCode className="w-6 h-6 text-indigo-400" />
+        <div className="flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-slate-300 mb-2.5 sm:mb-3 shadow-inner">
+          <FileCode className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-400" />
         </div>
 
         {selectedFiles.length > 0 ? (
           <div>
             {selectedFiles.length === 1 ? (
               <>
-                <p className="text-sm font-semibold text-white truncate max-w-xs sm:max-w-md">
+                <p className="text-xs sm:text-sm font-semibold text-white truncate max-w-[260px] sm:max-w-md">
                   {selectedFiles[0].name}
                 </p>
-                <p className="text-xs font-mono text-indigo-300 mt-1">
+                <p className="text-[11px] sm:text-xs font-mono text-indigo-300 mt-1">
                   {(selectedFiles[0].size / (1024 * 1024)).toFixed(2)} MB ({selectedFiles[0].size.toLocaleString()} bytes)
                 </p>
               </>
             ) : (
               <>
-                <p className="text-sm font-semibold text-white truncate max-w-xs sm:max-w-md">
+                <p className="text-xs sm:text-sm font-semibold text-white truncate max-w-[260px] sm:max-w-md">
                   {CompositeFileReader.sortParts([...selectedFiles])[0].name.replace(/\.part[-_]?\d+$/i, '')}
                 </p>
-                <p className="text-xs font-mono text-indigo-300 mt-1">
-                  Multi-part Container ({selectedFiles.length} parts detected, {(totalSelectedBytes / (1024 * 1024)).toFixed(2)} MB total)
+                <p className="text-[11px] sm:text-xs font-mono text-indigo-300 mt-1">
+                  Multi-part Container ({selectedFiles.length} parts, {(totalSelectedBytes / (1024 * 1024)).toFixed(2)} MB total)
                 </p>
               </>
             )}
-            <p className="text-[11px] text-slate-500 mt-2">Click or drag file(s) to replace</p>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 mt-1.5 sm:mt-2">Tap or drag file(s) to change</p>
           </div>
         ) : (
           <div>
-            <p className="text-sm font-medium text-slate-200">
-              Drag & drop file(s) here, or <span className="text-indigo-400 font-semibold underline">browse</span>
+            <p className="text-xs sm:text-sm font-medium text-slate-200">
+              <span className="text-indigo-400 font-semibold underline">Tap to browse file(s)</span> or drag & drop
             </p>
-            <p className="text-xs text-slate-500 mt-1">
-              Supports arbitrary file sizes (uncapped). Multi-part .part files supported for decryption.
+            <p className="text-[11px] sm:text-xs text-slate-500 mt-1">
+              Supports arbitrary file sizes (uncapped). Single or multi-part .part files.
             </p>
           </div>
         )}
@@ -717,25 +717,25 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       )}
 
       {/* Action Buttons */}
-      <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="mt-4 sm:mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
         <button
           id="encrypt-action-btn"
           onClick={() => startProcessing('ENCRYPT')}
           disabled={isProcessing || selectedFiles.length === 0}
-          className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white py-3 px-4 text-xs font-semibold shadow-lg shadow-indigo-900/20 transition-all cursor-pointer"
+          className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white py-3.5 sm:py-3 px-4 text-xs font-semibold shadow-lg shadow-indigo-900/20 transition-all cursor-pointer active:scale-[0.98]"
         >
-          <Lock className="w-4 h-4" />
-          Encrypt File (4-Layer Cascade)
+          <Lock className="w-4 h-4 shrink-0" />
+          <span>Encrypt File (4-Layer Cascade)</span>
         </button>
 
         <button
           id="decrypt-action-btn"
           onClick={() => startProcessing('DECRYPT')}
           disabled={isProcessing || selectedFiles.length === 0}
-          className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-100 py-3 px-4 text-xs font-semibold border border-slate-700 shadow-md transition-all cursor-pointer"
+          className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-100 py-3.5 sm:py-3 px-4 text-xs font-semibold border border-slate-700 shadow-md transition-all cursor-pointer active:scale-[0.98]"
         >
-          <Unlock className="w-4 h-4" />
-          Decrypt File (Reverse Cascade)
+          <Unlock className="w-4 h-4 shrink-0" />
+          <span>Decrypt File (Reverse Cascade)</span>
         </button>
       </div>
     </div>

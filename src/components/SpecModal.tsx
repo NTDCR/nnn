@@ -24,21 +24,21 @@ export const SpecModal: React.FC<SpecModalProps> = ({ isOpen, onClose }) => {
     <div
       id="spec-modal-backdrop"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 sm:p-4 overflow-y-auto"
     >
       <div
         id="spec-modal-content"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl text-slate-200"
+        className="w-full max-w-3xl max-h-[92vh] sm:max-h-[90vh] overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 p-4 sm:p-6 shadow-2xl text-slate-200"
       >
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800 sticky top-0 bg-slate-900 z-10">
-          <div className="flex items-center gap-2.5">
-            <Shield className="w-5 h-5 text-indigo-400" />
-            <h3 className="text-lg font-bold text-white">Fort-Knox Architecture & Specification</h3>
+        <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800 sticky top-0 bg-slate-900 z-10">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <Shield className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-400 shrink-0" />
+            <h3 className="text-sm sm:text-lg font-bold text-white truncate">Architecture & Specification</h3>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            className="p-1.5 sm:p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer active:scale-95 shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -111,7 +111,7 @@ export const SpecModal: React.FC<SpecModalProps> = ({ isOpen, onClose }) => {
         <div className="mt-6 pt-4 border-t border-slate-800 flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition"
+            className="w-full sm:w-auto px-5 py-2.5 sm:py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition cursor-pointer active:scale-[0.98]"
           >
             Close Specification
           </button>

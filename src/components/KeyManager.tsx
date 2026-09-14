@@ -301,64 +301,68 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   };
 
   return (
-    <div id="key-manager-section" className="rounded-2xl bg-slate-900/90 border border-slate-800 p-5 md:p-6 shadow-xl backdrop-blur-sm">
+    <div id="key-manager-section" className="rounded-2xl bg-slate-900/90 border border-slate-800 p-3.5 sm:p-5 md:p-6 shadow-xl backdrop-blur-sm">
       {/* Header with Quick Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-5 border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-            <Key className="w-5 h-5" />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 sm:pb-5 border-b border-slate-800">
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+            <Key className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
           <div>
-            <h2 className="text-base font-semibold text-white flex items-center gap-2">
-              4-Layer Cascade Key Management
-              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-800/60 text-indigo-300 font-mono">
-                1792-bit Combined Entropy
+            <h2 className="text-sm sm:text-base font-semibold text-white flex items-center gap-2 flex-wrap">
+              <span>Cascade Key Management</span>
+              <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-800/60 text-indigo-300 font-mono">
+                1792-bit Entropy
               </span>
             </h2>
-            <p className="text-xs text-slate-400">
-              Layer 1 operates with a strictly native 1024-bit key. Layers 2–4 use independent 256-bit keys (CSPRNG generated).
+            <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
+              Layer 1: native 1024-bit key • Layers 2–4: independent 256-bit keys (CSPRNG generated)
             </p>
           </div>
         </div>
 
-        {/* Global Key Actions */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Global Key Actions - Mobile-First responsive button grid */}
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
           <button
             id="generate-all-keys-btn"
             onClick={handleGenerateAll}
             disabled={disabled}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium shadow-sm transition-all cursor-pointer"
+            className="col-span-2 sm:col-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold shadow-sm transition-all cursor-pointer active:scale-[0.98]"
           >
-            <Sparkles className="w-3.5 h-3.5" />
-            Generate All 4 Keys
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span>Generate All 4 Keys</span>
           </button>
           <button
             id="copy-all-keys-btn"
             onClick={handleCopyAll}
             disabled={disabled}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-medium border border-slate-700 transition"
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-medium border border-slate-700 transition active:scale-[0.98]"
           >
-            {copyAllStatus ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            {copyAllStatus ? 'Copied All!' : 'Copy All'}
+            {copyAllStatus ? <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> : <Copy className="w-3.5 h-3.5 shrink-0" />}
+            <span>{copyAllStatus ? 'Copied!' : 'Copy All'}</span>
           </button>
-          <button
-            id="export-keys-btn"
-            onClick={handleExportJson}
-            title="Export keys to JSON backup"
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-          >
-            <Download className="w-3.5 h-3.5" />
-          </button>
-          <label
-            id="import-keys-label"
-            title={disabled ? 'Keys locked during active processing' : 'Import keys from JSON'}
-            className={`p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition ${
-              disabled ? 'opacity-50 pointer-events-none cursor-not-allowed' : 'cursor-pointer'
-            }`}
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <input type="file" accept=".json" onChange={handleImportJson} disabled={disabled} className="hidden" />
-          </label>
+          <div className="flex items-center gap-2">
+            <button
+              id="export-keys-btn"
+              onClick={handleExportJson}
+              title="Export keys to JSON backup"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 py-2 sm:py-1.5 px-3 sm:px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-[0.98]"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="sm:hidden text-xs">Export</span>
+            </button>
+            <label
+              id="import-keys-label"
+              title={disabled ? 'Keys locked during active processing' : 'Import keys from JSON'}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 py-2 sm:py-1.5 px-3 sm:px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-[0.98] ${
+                disabled ? 'opacity-50 pointer-events-none cursor-not-allowed' : 'cursor-pointer'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span className="sm:hidden text-xs">Import</span>
+              <input type="file" accept=".json" onChange={handleImportJson} disabled={disabled} className="hidden" />
+            </label>
+          </div>
         </div>
       </div>
 
@@ -460,49 +464,49 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
                       : 'Paste or generate 64-character hex key (256 bits)...'
                   }
                   disabled={disabled}
-                  className="w-full rounded-lg bg-slate-900 border border-slate-700/80 px-3 py-2 pr-28 text-xs font-mono text-slate-100 placeholder-slate-600 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                  className="w-full rounded-lg bg-slate-900 border border-slate-700/80 px-3 py-2.5 sm:py-2 pr-28 text-xs font-mono text-slate-100 placeholder-slate-600 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                   spellCheck={false}
                 />
 
-                <div className="absolute right-1.5 flex items-center gap-1">
+                <div className="absolute right-1 flex items-center gap-0.5 sm:gap-1">
                   <button
                     type="button"
                     id={`generate-btn-layer-${idx + 1}`}
                     onClick={() => handleGenerateKey(item.key)}
                     disabled={disabled}
                     title={idx === 0 ? 'Generate 1024-bit CSPRNG key' : 'Generate 256-bit CSPRNG key'}
-                    className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-800 rounded transition"
+                    className="h-8 w-8 sm:h-7 sm:w-7 flex items-center justify-center text-slate-400 hover:text-indigo-300 hover:bg-slate-800 rounded transition active:scale-95"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
+                    <RefreshCw className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                   </button>
                   <button
                     type="button"
                     id={`toggle-vis-layer-${idx + 1}`}
                     onClick={() => toggleShow(idx)}
                     title={isVisible ? 'Hide key' : 'Show key'}
-                    className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition"
+                    className="h-8 w-8 sm:h-7 sm:w-7 flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition active:scale-95"
                   >
-                    {isVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    {isVisible ? <EyeOff className="w-4 h-4 sm:w-3.5 sm:h-3.5" /> : <Eye className="w-4 h-4 sm:w-3.5 sm:h-3.5" />}
                   </button>
                   <button
                     type="button"
                     id={`copy-btn-layer-${idx + 1}`}
                     onClick={() => handleCopy(val, idx)}
                     title="Copy key to clipboard"
-                    className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded transition"
+                    className="h-8 w-8 sm:h-7 sm:w-7 flex items-center justify-center text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded transition active:scale-95"
                   >
                     {copiedIndex === idx ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <Check className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-emerald-400" />
                     ) : (
-                      <Copy className="w-3.5 h-3.5" />
+                      <Copy className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                     )}
                   </button>
                 </div>
               </div>
 
-              <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500 px-1">
-                <span>{layerInfo.description}</span>
-                <span className="font-mono">
+              <div className="mt-1.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[10px] sm:text-[11px] text-slate-500 px-1">
+                <span className="truncate">{layerInfo.description}</span>
+                <span className="font-mono text-slate-400 shrink-0 self-end sm:self-auto">
                   {val.length}/{idx === 0 ? '256' : '64'} hex
                 </span>
               </div>
