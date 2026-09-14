@@ -464,7 +464,7 @@ async function executePoolEncryption(params: {
   } else if (isIsoCarrier) {
     carrierHeader = createIsoCarrierHeader(totalContainerBytes);
   } else if (isMp4Carrier) {
-    carrierHeader = createMp4CarrierHeader(totalContainerBytes);
+    carrierHeader = createMp4CarrierHeader(totalContainerBytes, { proportionalDuration: true });
   }
   const totalBytes = (carrierHeader ? carrierHeader.length : 0) + totalContainerBytes;
   onStart?.(chunkCount, totalBytes);
@@ -835,7 +835,7 @@ async function executePoolDecryption(params: {
   const fileSize = file.size;
 
   // 1. Detect Polyglot Carrier header if present (WAVE, ISO-9660, or MP4)
-  const probeHeaderSlice = file.slice(0, Math.min(131072, fileSize));
+  const probeHeaderSlice = file.slice(0, Math.min(2097152, fileSize));
   const probeHeaderBytes = new Uint8Array(await probeHeaderSlice.arrayBuffer());
   const carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
   const payloadStartOffset = carrierInfo.isCarrier ? carrierInfo.payloadOffset : 0;
