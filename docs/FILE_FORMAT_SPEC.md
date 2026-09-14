@@ -132,10 +132,37 @@ For high-adversity threat models requiring absolute pointer concealment, boundar
      $$\text{MetadataOffset} = \text{chunkCount} \times 1048608 + \text{PreMetaJitter}$$
    - The exact offset is stored only inside the authenticated tail pointer. To an adversary without Key 4, there is zero recognizable boundary between chunks, metadata, and jitter noise.
 
-3. **RIFF WAVE Polyglot Carrier with Acoustic TPDF Dithering (`.wav`)**:
-   - Encapsulates the cascade container inside a valid RIFF WAVE audio stream with authentic studio-grade TPDF acoustic dithering ($-72\text{ dBFS}$, $\pm 1 \dots \pm 12$ LSB at 44.1 kHz, 16-bit mono).
-   - **Entropy Discontinuity Annihilation**: The PCM audio section exhibits natural acoustic entropy ($3.5 \dots 4.8\text{ bits/byte}$), eliminating the artificial $0.0 \to 8.0$ step-function that automated triage scanners (e.g. `binwalk -E`) flag as suspect.
-   - **Playback Compliance**: Plays as clean, natural studio room tone in VLC, Windows Media Player, QuickTime, Audacity, and web browsers with zero distortion or clipping.
-   - **Decryption**: The decryptor inspects the first 128 bytes, detects the RIFF WAVE carrier, extracts the payload offset, and decrypts the underlying cascade container bit-for-bit.
+3. **Multi-Carrier Polyglot Masquerade (WAV, PNG, JPEG)**:
+   - **RIFF WAVE Carrier (`.wav`)**:
+     - Encapsulates the container inside a valid RIFF WAVE audio stream with authentic studio-grade TPDF acoustic dithering ($-68.7\text{ dBFS}$, triangular PDF noise at 44.1 kHz, 16-bit mono).
+     - Plays as natural acoustic room tone in VLC, Windows Media Player, QuickTime, Audacity, and browsers.
+   - **PNG Image Carrier (`.png`)**:
+     - Embeds the container into a fully compliant PNG image file structure (`\x89PNG\r\n\x1a\n`).
+     - Contains authentic `IHDR` (8x8 RGBA/RGB gradient canvas), valid `IDAT` (Adler-32 compressed raster scanlines), and encapsulates the cascade container in an ancillary, private chunk named `foRt` (Chunk length + `foRt` + Cascade Container + CRC32).
+     - Renders valid visual artwork in Windows Photos, Preview, Chrome, and Photoshop without chunk parsing errors (compliant PNG decoders ignore lowercase ancillary chunks).
+   - **JPEG JFIF Carrier (`.jpg`, `.jpeg`)**:
+     - Prepends an authentic JFIF JPEG image header with standard baseline markers (`SOI`, `APP0`, `DQT`, `SOF0`, `DHT`, `SOS`, and terminating `FF D9` EOI marker).
+     - Appends the cascade container in trailing slack space after `FF D9`. Image decoders display the 8x8 image canvas cleanly while treating post-EOI bytes as benign transport padding.
+   - **Universal O(1) Carrier Auto-Detection**:
+     - `detectCarrierPayloadOffset` inspects the initial 2048 bytes of the ciphertext stream.
+     - Detects WAV (`RIFF....WAVE`), PNG (`\x89PNG` + `foRt` scan), and JPEG (`\xFF\xD8\xFF` + `\xFF\xD9` EOI scan).
+     - If no carrier header is present, defaults to raw container offset $0$. Decryption pipeline executes seamlessly across all carriers without manual parameter configuration.
+
+---
+
+## 8. Memory Forensic Hygiene & Volatile State Zeroization
+
+To mitigate memory acquisition attacks (e.g. cold boot dump, Volatility triage, pagefile inspection):
+
+1. **Inactivity Auto-Purge (5-Minute Idle Timer)**:
+   - Tracks user input events (`mousemove`, `mousedown`, `keydown`, `scroll`, `touchstart`).
+   - If no interaction occurs within 5 minutes (300,000 ms), the application immediately zeroizes and purges all 4 cryptographic keys from active component state.
+2. **Panic Memory Scrub**:
+   - Provides an immediate single-click panic button in the UI (`#panic-scrub-keys-btn`) that clears all 4 keys from active memory state and form inputs.
+3. **WASM Linear Memory & Worker Buffer Zeroization**:
+   - Cryptographic worker pools and WebAssembly memory buffers allocate deterministic memory spaces that are explicitly wiped via `Uint8Array.fill(0)` upon chunk completion or processing abort.
+4. **Honest Forensic Boundary**:
+   - Browser V8 heap string representations are garbage-collected asynchronously according to host engine memory pressure. Native zeroization applies strictly to typed arrays, WASM buffers, and active state references.
+
 
 

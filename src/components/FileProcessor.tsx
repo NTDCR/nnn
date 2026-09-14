@@ -257,7 +257,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     if (action === 'ENCRYPT') {
       targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : `${safeRawName}.dat`;
     } else {
-      const stripped = safeRawName.replace(/\.(fortknox|dat|wav|bin|iso)$/i, '');
+      const stripped = safeRawName.replace(/\.(fortknox|dat|wav|png|jpe?g|bin|iso)$/i, '');
       if (stripped.length > 0 && stripped !== safeRawName) {
         targetFileName = stripped;
       } else {
@@ -625,6 +625,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               className="bg-transparent text-purple-200 font-mono text-[11px] outline-none cursor-pointer"
             >
               <option value=".dat" className="bg-slate-900 text-slate-200">.dat (Raw Binary Data)</option>
+              <option value=".png" className="bg-slate-900 text-slate-200">.png (Valid PNG Image Polyglot)</option>
+              <option value=".jpg" className="bg-slate-900 text-slate-200">.jpg (Valid JPEG Image Polyglot)</option>
               <option value=".wav" className="bg-slate-900 text-slate-200">.wav (Playable Audio Polyglot)</option>
               <option value=".bin" className="bg-slate-900 text-slate-200">.bin (Memory Image)</option>
               <option value=".iso" className="bg-slate-900 text-slate-200">.iso (Disk Image)</option>
@@ -632,8 +634,12 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             </select>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/70 border border-purple-800/60 text-purple-300 font-mono hidden lg:inline-flex items-center gap-1">
-            {stealthExtension === '.wav'
-              ? 'Audio Polyglot Active • Plays in Media Players • Bypasses Entropy Scanners'
+            {stealthExtension === '.png'
+              ? 'PNG Image Polyglot Active • Displays in Photo Viewers'
+              : stealthExtension === '.jpg'
+              ? 'JPEG Photo Polyglot Active • Displays in Photo Viewers'
+              : stealthExtension === '.wav'
+              ? 'Audio Polyglot Active • Plays in Media Players'
               : 'Blind Pointer Offset • Modulo Annihilated • 0 Magic Bytes'}
           </span>
         </div>

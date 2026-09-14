@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   generateRandomKey,
   calculateEntropyScore,
@@ -17,6 +17,7 @@ import {
   Download,
   Upload,
   AlertCircle,
+  ShieldAlert,
   X,
 } from 'lucide-react';
 
@@ -85,6 +86,44 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     { key: 'layer3ChaChaHex', label: 'Layer 3: ChaCha20-Poly1305 Key', index: 2 },
     { key: 'layer4AesHex', label: 'Layer 4: AES-256-GCM Key', index: 3 },
   ];
+
+  // Inactivity Auto-Purge: 5 minutes of idle time automatically wipes keys from memory state
+  useEffect(() => {
+    const hasKeys = !!(keys.layer1ThreefishHex || keys.layer2SerpentHex || keys.layer3ChaChaHex || keys.layer4AesHex);
+    if (!hasKeys || disabled) return;
+
+    let timeoutId: NodeJS.Timeout | number;
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        onChangeKeys({
+          layer1ThreefishHex: '',
+          layer2SerpentHex: '',
+          layer3ChaChaHex: '',
+          layer4AesHex: '',
+        });
+      }, 5 * 60 * 1000); // 5 minutes
+    };
+
+    resetTimer();
+    const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart'];
+    events.forEach((evt) => window.addEventListener(evt, resetTimer, { passive: true }));
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach((evt) => window.removeEventListener(evt, resetTimer));
+    };
+  }, [keys, disabled, onChangeKeys]);
+
+  const handlePanicScrub = () => {
+    setImportError(null);
+    onChangeKeys({
+      layer1ThreefishHex: '',
+      layer2SerpentHex: '',
+      layer3ChaChaHex: '',
+      layer4AesHex: '',
+    });
+  };
 
   const handleGenerateKey = (keyName: keyof CascadeKeys) => {
     setImportError(null);
@@ -340,6 +379,16 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
           >
             {copyAllStatus ? <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> : <Copy className="w-3.5 h-3.5 shrink-0" />}
             <span>{copyAllStatus ? 'Copied!' : 'Copy All'}</span>
+          </button>
+          <button
+            id="panic-scrub-keys-btn"
+            onClick={handlePanicScrub}
+            disabled={disabled || !(keys.layer1ThreefishHex || keys.layer2SerpentHex || keys.layer3ChaChaHex || keys.layer4AesHex)}
+            title="Instantly zeroize and purge all 4 keys from active memory"
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 border border-rose-800/60 disabled:opacity-40 text-rose-300 text-xs font-medium transition cursor-pointer active:scale-[0.98]"
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+            <span>Scrub</span>
           </button>
           <div className="flex items-center gap-2">
             <button

@@ -20,6 +20,8 @@ import {
   BLIND_MAX_DELTA,
   deriveBlindPointerDelta,
   createWavCarrierHeader,
+  createPngCarrierHeader,
+  createJpgCarrierHeader,
   detectCarrierPayloadOffset,
 } from '../crypto/format.ts';
 import { hmac } from '@noble/hashes/hmac.js';
@@ -437,6 +439,8 @@ async function executePoolEncryption(params: {
   crypto.getRandomValues(nonceAes);
 
   const isWavCarrier = Boolean(outputFileName && /\.wav$/i.test(outputFileName));
+  const isPngCarrier = Boolean(outputFileName && /\.png$/i.test(outputFileName));
+  const isJpgCarrier = Boolean(outputFileName && /\.(jpe?g)$/i.test(outputFileName));
   const blindDelta = deriveBlindPointerDelta(k4, BLIND_MAX_DELTA);
 
   // Pre-metadata jitter: 1 KB to 16 KB CSPRNG noise to obliterate fixed chunk-to-metadata boundary
@@ -454,15 +458,19 @@ async function executePoolEncryption(params: {
   const suffixJitterLen = blindDelta;
   const totalContainerBytes = chunkCount * ENCRYPTED_CHUNK_SIZE + preMetaJitterLen + METADATA_SIZE + prefixJitterLen + POINTER_BLOCK_SIZE + suffixJitterLen;
 
-  let wavCarrierHeader: Uint8Array | null = null;
+  let carrierHeader: Uint8Array | null = null;
   if (isWavCarrier) {
-    wavCarrierHeader = createWavCarrierHeader(totalContainerBytes);
+    carrierHeader = createWavCarrierHeader(totalContainerBytes);
+  } else if (isPngCarrier) {
+    carrierHeader = createPngCarrierHeader(totalContainerBytes);
+  } else if (isJpgCarrier) {
+    carrierHeader = createJpgCarrierHeader();
   }
-  const totalBytes = (wavCarrierHeader ? wavCarrierHeader.length : 0) + totalContainerBytes;
+  const totalBytes = (carrierHeader ? carrierHeader.length : 0) + totalContainerBytes;
   onStart?.(chunkCount, totalBytes);
 
-  if (wavCarrierHeader) {
-    await onChunkOutput(wavCarrierHeader);
+  if (carrierHeader) {
+    await onChunkOutput(carrierHeader);
   }
 
   const startTime = performance.now();
@@ -825,8 +833,8 @@ async function executePoolDecryption(params: {
   const { file, workers, k1, k2, k4, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
   const fileSize = file.size;
 
-  // 1. Detect RIFF WAVE Carrier Polyglot header if present
-  const probeHeaderSlice = file.slice(0, Math.min(256, fileSize));
+  // 1. Detect Polyglot Carrier header if present (WAVE, PNG, or JPEG)
+  const probeHeaderSlice = file.slice(0, Math.min(2048, fileSize));
   const probeHeaderBytes = new Uint8Array(await probeHeaderSlice.arrayBuffer());
   const carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
   const payloadStartOffset = carrierInfo.isCarrier ? carrierInfo.payloadOffset : 0;
@@ -1157,7 +1165,7 @@ async function executePoolDecryption(params: {
   const totalTimeMs = performance.now() - startTime;
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);
 
-  const strippedName = file.name.replace(/\.(fortknox|dat|wav|bin|iso)$/i, '');
+  const strippedName = file.name.replace(/\.(fortknox|dat|wav|png|jpe?g|bin|iso)$/i, '');
   const restoredName = outputFileName || (strippedName !== file.name && strippedName.length > 0
     ? strippedName
     : `decrypted_${file.name.length > 0 ? file.name : 'file'}`);
