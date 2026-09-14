@@ -127,6 +127,7 @@ export function encodeMetadataBlob(meta: Partial<ContainerMetadata> & {
   nonceAes256: Uint8Array;
   orderConfirm: Uint8Array;
   hmacIntegrity?: Uint8Array;
+  lastModified?: number;
 }): Uint8Array {
   if (meta.originalSize < 0 || !Number.isSafeInteger(meta.originalSize)) {
     throw new Error('Invalid original file size');
@@ -172,6 +173,10 @@ export function encodeMetadataBlob(meta: Partial<ContainerMetadata> & {
     buf.set(meta.hmacIntegrity, 80);
   }
   buf.set(meta.orderConfirm, 112);
+
+  if (meta.lastModified && Number.isSafeInteger(meta.lastModified) && meta.lastModified > 0) {
+    view.setBigUint64(144, BigInt(meta.lastModified), true);
+  }
 
   return buf;
 }
@@ -222,6 +227,13 @@ export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
   const hmacIntegrity = new Uint8Array(buf.subarray(80, 112));
   const orderConfirm = new Uint8Array(buf.subarray(112, 144));
 
+  const rawLastModifiedBig = view.getBigUint64(144, true);
+  let lastModified: number | undefined;
+  // If timestamp falls in valid realistic Unix timestamp range (year 1990 to 2100 in ms)
+  if (rawLastModifiedBig > 631152000000n && rawLastModifiedBig < 4102444800000n) {
+    lastModified = Number(rawLastModifiedBig);
+  }
+
   return {
     magic,
     version,
@@ -234,6 +246,7 @@ export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
     nonceAes256,
     hmacIntegrity,
     orderConfirm,
+    lastModified,
   };
 }
 
@@ -498,22 +511,41 @@ export function calculateAdler32(buf: Uint8Array): number {
   return ((b << 16) | a) >>> 0;
 }
 
+export interface PngCarrierOptions {
+  width?: number;
+  height?: number;
+  includeAncillaryMetadata?: boolean;
+}
+
+export interface JpgCarrierOptions {
+  includeExif?: boolean;
+}
+
 /**
- * Generates a valid PNG carrier header (264 bytes)
- * Contains authentic IHDR, IDAT (8x8 RGB pixel gradient), and starts an ancillary private 'foRt' chunk.
- * Displays as an authentic PNG image in Chrome, Safari, Photos, and Preview.
+ * Generates a valid PNG carrier header
+ * When includeAncillaryMetadata is enabled, synthesizes standard W3C ancillary chunks (sRGB, pHYs, tEXt)
+ * and an adaptive gradient canvas. Default mode produces the verified 264-byte baseline header.
  */
-export function createPngCarrierHeader(payloadLength: number): Uint8Array {
-  const width = 8, height = 8;
+export function createPngCarrierHeader(payloadLength: number, options?: PngCarrierOptions): Uint8Array {
+  const includeMeta = options?.includeAncillaryMetadata ?? false;
+  const width = options?.width ?? 8;
+  const height = options?.height ?? 8;
+
   const rawScanlines = new Uint8Array(height * (1 + width * 3));
   for (let y = 0; y < height; y++) {
     const rowStart = y * (1 + width * 3);
     rawScanlines[rowStart] = 0;
     for (let x = 0; x < width; x++) {
       const px = rowStart + 1 + x * 3;
-      rawScanlines[px] = 0x1E;     // R
-      rawScanlines[px + 1] = 0x1E; // G
-      rawScanlines[px + 2] = 0x2E; // B
+      if (includeMeta) {
+        rawScanlines[px] = Math.min(255, 30 + Math.floor((x / width) * 40));
+        rawScanlines[px + 1] = Math.min(255, 30 + Math.floor((y / height) * 40));
+        rawScanlines[px + 2] = Math.min(255, 60 + Math.floor(((x + y) / (width + height)) * 80));
+      } else {
+        rawScanlines[px] = 0x1E;     // R
+        rawScanlines[px + 1] = 0x1E; // G
+        rawScanlines[px + 2] = 0x2E; // B
+      }
     }
   }
   const adler = calculateAdler32(rawScanlines);
@@ -531,46 +563,115 @@ export function createPngCarrierHeader(payloadLength: number): Uint8Array {
   zlibStream[adlerOffset + 2] = (adler >> 8) & 0xff;
   zlibStream[adlerOffset + 3] = adler & 0xff;
 
-  const header = new Uint8Array(8 + 25 + (12 + zlibStream.length) + 8);
+  if (!includeMeta) {
+    const header = new Uint8Array(8 + 25 + (12 + zlibStream.length) + 8);
+    const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+
+    // 1. Signature
+    header.set([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], 0);
+
+    // 2. IHDR
+    view.setUint32(8, 13, false);
+    header.set([0x49, 0x48, 0x44, 0x52], 12); // IHDR
+    view.setUint32(16, width, false);
+    view.setUint32(20, height, false);
+    header[24] = 8; // 8-bit
+    header[25] = 2; // RGB
+    header[26] = 0; header[27] = 0; header[28] = 0;
+    const ihdrCrc = calculateCrc32(header.subarray(12, 29));
+    view.setUint32(29, ihdrCrc, false);
+
+    // 3. IDAT
+    const idatOffset = 33;
+    view.setUint32(idatOffset, zlibStream.length, false);
+    header.set([0x49, 0x44, 0x41, 0x54], idatOffset + 4); // IDAT
+    header.set(zlibStream, idatOffset + 8);
+    const idatCrc = calculateCrc32(header.subarray(idatOffset + 4, idatOffset + 8 + zlibStream.length));
+    view.setUint32(idatOffset + 8 + zlibStream.length, idatCrc, false);
+
+    // 4. foRt ancillary private chunk header (length = payloadLength)
+    const fortOffset = idatOffset + 12 + zlibStream.length;
+    view.setUint32(fortOffset, payloadLength, false);
+    header.set([0x66, 0x6F, 0x52, 0x74], fortOffset + 4); // "foRt"
+
+    return header;
+  }
+
+  // Enhanced PNG header with sRGB, pHYs, and tEXt chunks
+  const srgbData = new Uint8Array([0x73, 0x52, 0x47, 0x42, 0x00]); // sRGB\0
+  const srgbCrc = calculateCrc32(srgbData);
+
+  const physData = new Uint8Array([
+    0x70, 0x48, 0x59, 0x73,
+    0x00, 0x00, 0x0E, 0xC4, // 3780 dpm X (96 DPI)
+    0x00, 0x00, 0x0E, 0xC4, // 3780 dpm Y
+    0x01                    // unit: meter
+  ]);
+  const physCrc = calculateCrc32(physData);
+
+  const textKeyword = new TextEncoder().encode('Software\0FortKnox Photo Engine');
+  const textData = new Uint8Array(4 + textKeyword.length);
+  textData.set([0x74, 0x45, 0x58, 0x74], 0); // "tEXt"
+  textData.set(textKeyword, 4);
+  const textCrc = calculateCrc32(textData);
+
+  const totalLen = 8 + 25 + 13 + 21 + (12 + textKeyword.length) + (12 + zlibStream.length) + 8;
+  const header = new Uint8Array(totalLen);
   const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
 
+  let p = 0;
   // 1. Signature
-  header.set([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], 0);
+  header.set([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], p); p += 8;
 
   // 2. IHDR
-  view.setUint32(8, 13, false);
-  header.set([0x49, 0x48, 0x44, 0x52], 12); // IHDR
-  view.setUint32(16, width, false);
-  view.setUint32(20, height, false);
-  header[24] = 8; // 8-bit
-  header[25] = 2; // RGB
-  header[26] = 0; header[27] = 0; header[28] = 0;
-  const ihdrCrc = calculateCrc32(header.subarray(12, 29));
-  view.setUint32(29, ihdrCrc, false);
+  view.setUint32(p, 13, false); p += 4;
+  header.set([0x49, 0x48, 0x44, 0x52], p);
+  view.setUint32(p + 4, width, false);
+  view.setUint32(p + 8, height, false);
+  header[p + 12] = 8;
+  header[p + 13] = 2;
+  header[p + 14] = 0; header[p + 15] = 0; header[p + 16] = 0;
+  const ihdrCrc = calculateCrc32(header.subarray(p, p + 17));
+  p += 17;
+  view.setUint32(p, ihdrCrc, false); p += 4;
 
-  // 3. IDAT
-  const idatOffset = 33;
-  view.setUint32(idatOffset, zlibStream.length, false);
-  header.set([0x49, 0x44, 0x41, 0x54], idatOffset + 4); // IDAT
-  header.set(zlibStream, idatOffset + 8);
-  const idatCrc = calculateCrc32(header.subarray(idatOffset + 4, idatOffset + 8 + zlibStream.length));
-  view.setUint32(idatOffset + 8 + zlibStream.length, idatCrc, false);
+  // 3. sRGB
+  view.setUint32(p, 1, false); p += 4;
+  header.set(srgbData, p); p += srgbData.length;
+  view.setUint32(p, srgbCrc, false); p += 4;
 
-  // 4. foRt ancillary private chunk header (length = payloadLength)
-  const fortOffset = idatOffset + 12 + zlibStream.length;
-  view.setUint32(fortOffset, payloadLength, false);
-  header.set([0x66, 0x6F, 0x52, 0x74], fortOffset + 4); // "foRt"
+  // 4. pHYs
+  view.setUint32(p, 9, false); p += 4;
+  header.set(physData, p); p += physData.length;
+  view.setUint32(p, physCrc, false); p += 4;
+
+  // 5. tEXt
+  view.setUint32(p, textKeyword.length, false); p += 4;
+  header.set(textData, p); p += textData.length;
+  view.setUint32(p, textCrc, false); p += 4;
+
+  // 6. IDAT
+  view.setUint32(p, zlibStream.length, false); p += 4;
+  header.set([0x49, 0x44, 0x41, 0x54], p);
+  header.set(zlibStream, p + 4);
+  const idatCrc = calculateCrc32(header.subarray(p, p + 4 + zlibStream.length));
+  p += 4 + zlibStream.length;
+  view.setUint32(p, idatCrc, false); p += 4;
+
+  // 7. foRt ancillary private chunk header (length = payloadLength)
+  view.setUint32(p, payloadLength, false); p += 4;
+  header.set([0x66, 0x6F, 0x52, 0x74], p); p += 4;
 
   return header;
 }
 
 /**
- * Generates a valid minimal JFIF JPEG image carrier header (332 bytes)
+ * Generates a valid minimal JFIF JPEG image carrier header
+ * When options.includeExif is true, inserts an authentic standard APP1 EXIF metadata block.
  * Ends with 0xFF 0xD9 (EOI). The cascade container is stored in trailing slack space.
- * Displays as an authentic image in photo viewers; forensic tools classify it as valid JPEG.
  */
-export function createJpgCarrierHeader(): Uint8Array {
-  return new Uint8Array([
+export function createJpgCarrierHeader(options?: JpgCarrierOptions): Uint8Array {
+  const baseJpg = [
     0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
     0x00, 0x48, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
     0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12,
@@ -592,7 +693,31 @@ export function createJpgCarrierHeader(): Uint8Array {
     0xCA, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6,
     0xE7, 0xE8, 0xE9, 0xEA, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFF, 0xDA,
     0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x7F, 0x00, 0xFF, 0xD9
-  ]);
+  ];
+
+  if (!options?.includeExif) {
+    return new Uint8Array(baseJpg);
+  }
+
+  // Insert standard APP1 EXIF segment immediately after APP0 (at index 20)
+  const exifSegment = [
+    0xFF, 0xE1, // APP1 marker
+    0x00, 0x41, // length = 65 bytes
+    0x45, 0x78, 0x69, 0x66, 0x00, 0x00, // "Exif\0\0"
+    0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, // TIFF header (little endian "II", 42, IFD0 offset 8)
+    0x02, 0x00, // 2 directory entries
+    0x31, 0x01, 0x02, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x26, 0x00, 0x00, 0x00, // Tag 0x0131 (Software)
+    0x0F, 0x01, 0x02, 0x00, 0x07, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00, 0x00, // Tag 0x010F (Make)
+    0x00, 0x00, 0x00, 0x00, // Next IFD offset
+    0x46, 0x6F, 0x72, 0x74, 0x4B, 0x6E, 0x6F, 0x78, 0x20, 0x32, 0x00, 0x00, // "FortKnox 2\0\0" (12 bytes)
+    0x43, 0x61, 0x6D, 0x65, 0x72, 0x61, 0x00 // "Camera\0" (7 bytes)
+  ];
+
+  const fullJpg = new Uint8Array(baseJpg.length + exifSegment.length);
+  fullJpg.set(baseJpg.slice(0, 20), 0); // SOI + APP0
+  fullJpg.set(exifSegment, 20);         // APP1 EXIF
+  fullJpg.set(baseJpg.slice(20), 20 + exifSegment.length); // Remainder through FF D9
+  return fullJpg;
 }
 
 /**
@@ -650,8 +775,8 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
   if (
     fileStartBytes[0] === 0xFF && fileStartBytes[1] === 0xD8 && fileStartBytes[2] === 0xFF
   ) {
-    // Scan for FF D9 (EOI) within first 2048 bytes
-    const limit = Math.min(fileStartBytes.length - 1, 2048);
+    // Scan for FF D9 (EOI) within first 4096 bytes
+    const limit = Math.min(fileStartBytes.length - 1, 4096);
     for (let i = 2; i < limit; i++) {
       if (fileStartBytes[i] === 0xFF && fileStartBytes[i+1] === 0xD9) {
         return { isCarrier: true, payloadOffset: i + 2, carrierType: 'jpg' };

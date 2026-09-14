@@ -109,9 +109,28 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart'];
     events.forEach((evt) => window.addEventListener(evt, resetTimer, { passive: true }));
 
+    // Tab Visibility Guard: When tab is hidden in background, accelerate wipe timer to 60 seconds
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          onChangeKeys({
+            layer1ThreefishHex: '',
+            layer2SerpentHex: '',
+            layer3ChaChaHex: '',
+            layer4AesHex: '',
+          });
+        }, 60 * 1000); // 1 minute in background
+      } else {
+        resetTimer();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       clearTimeout(timeoutId);
       events.forEach((evt) => window.removeEventListener(evt, resetTimer));
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [keys, disabled, onChangeKeys]);
 

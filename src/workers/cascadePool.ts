@@ -462,9 +462,14 @@ async function executePoolEncryption(params: {
   if (isWavCarrier) {
     carrierHeader = createWavCarrierHeader(totalContainerBytes);
   } else if (isPngCarrier) {
-    carrierHeader = createPngCarrierHeader(totalContainerBytes);
+    const dim = totalContainerBytes > 5 * 1024 * 1024 ? 32 : 16;
+    carrierHeader = createPngCarrierHeader(totalContainerBytes, {
+      width: dim,
+      height: dim,
+      includeAncillaryMetadata: true,
+    });
   } else if (isJpgCarrier) {
-    carrierHeader = createJpgCarrierHeader();
+    carrierHeader = createJpgCarrierHeader({ includeExif: true });
   }
   const totalBytes = (carrierHeader ? carrierHeader.length : 0) + totalContainerBytes;
   onStart?.(chunkCount, totalBytes);
@@ -732,6 +737,7 @@ async function executePoolEncryption(params: {
     nonceAes256: nonceAes,
     hmacIntegrity,
     orderConfirm: orderHash,
+    lastModified: 'lastModified' in file ? file.lastModified : undefined,
   });
 
   let maskedMeta: Uint8Array;
@@ -834,7 +840,7 @@ async function executePoolDecryption(params: {
   const fileSize = file.size;
 
   // 1. Detect Polyglot Carrier header if present (WAVE, PNG, or JPEG)
-  const probeHeaderSlice = file.slice(0, Math.min(2048, fileSize));
+  const probeHeaderSlice = file.slice(0, Math.min(4096, fileSize));
   const probeHeaderBytes = new Uint8Array(await probeHeaderSlice.arrayBuffer());
   const carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
   const payloadStartOffset = carrierInfo.isCarrier ? carrierInfo.payloadOffset : 0;
@@ -1178,6 +1184,7 @@ async function executePoolDecryption(params: {
     finalSize: originalSize,
     totalTimeMs: Math.round(totalTimeMs),
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),
+    lastModified: metadata?.lastModified,
   };
   } finally {
     hmacClient.destroy();

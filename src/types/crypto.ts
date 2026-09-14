@@ -17,6 +17,7 @@ export interface ContainerMetadata {
   nonceAes256: Uint8Array;   // 12 bytes
   hmacIntegrity: Uint8Array; // 32 bytes HMAC-SHA256
   orderConfirm: Uint8Array;  // 32 bytes cascade order verification
+  lastModified?: number;     // Original file modification timestamp in milliseconds
 }
 
 export interface WorkerProgressMessage {
@@ -40,6 +41,7 @@ export interface WorkerSuccessMessage {
   totalTimeMs: number;
   averageSpeedMBs: number;
   blobUrl?: string; // If streaming directly to memory or fallback
+  lastModified?: number; // Preserved original modification timestamp
 }
 
 export interface LayerMetadata {

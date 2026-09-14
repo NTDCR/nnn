@@ -138,15 +138,25 @@ For high-adversity threat models requiring absolute pointer concealment, boundar
      - Plays as natural acoustic room tone in VLC, Windows Media Player, QuickTime, Audacity, and browsers.
    - **PNG Image Carrier (`.png`)**:
      - Embeds the container into a fully compliant PNG image file structure (`\x89PNG\r\n\x1a\n`).
-     - Contains authentic `IHDR` (8x8 RGBA/RGB gradient canvas), valid `IDAT` (Adler-32 compressed raster scanlines), and encapsulates the cascade container in an ancillary, private chunk named `foRt` (Chunk length + `foRt` + Cascade Container + CRC32).
-     - Renders valid visual artwork in Windows Photos, Preview, Chrome, and Photoshop without chunk parsing errors (compliant PNG decoders ignore lowercase ancillary chunks).
+     - Contains authentic `IHDR` with dynamic adaptive canvas dimensions ($16 \times 16$ to $32 \times 32$), valid `IDAT` (compressed raster scanlines), and authentic W3C ancillary chunks:
+       - `sRGB`: standard sRGB color space with perceptual rendering intent.
+       - `pHYs`: 3780 dots/meter (96 DPI standard screen density).
+       - `tEXt`: authentic software tag (`Software\0FortKnox Photo Engine`).
+     - Encapsulates the cascade container in an ancillary, private chunk named `foRt` (Chunk length + `foRt` + Cascade Container + CRC32).
+     - Renders valid visual artwork in Windows Photos, Preview, Chrome, and Photoshop without chunk parsing errors.
    - **JPEG JFIF Carrier (`.jpg`, `.jpeg`)**:
      - Prepends an authentic JFIF JPEG image header with standard baseline markers (`SOI`, `APP0`, `DQT`, `SOF0`, `DHT`, `SOS`, and terminating `FF D9` EOI marker).
-     - Appends the cascade container in trailing slack space after `FF D9`. Image decoders display the 8x8 image canvas cleanly while treating post-EOI bytes as benign transport padding.
+     - Injects authentic `APP1` EXIF metadata segment containing standard TIFF header and IFD0 tags (`Make`, `Software`).
+     - Appends the cascade container in trailing slack space after `FF D9`. Image decoders display the image canvas cleanly while treating post-EOI bytes as benign transport padding.
    - **Universal O(1) Carrier Auto-Detection**:
-     - `detectCarrierPayloadOffset` inspects the initial 2048 bytes of the ciphertext stream.
+     - `detectCarrierPayloadOffset` inspects the initial 4096 bytes of the ciphertext stream.
      - Detects WAV (`RIFF....WAVE`), PNG (`\x89PNG` + `foRt` scan), and JPEG (`\xFF\xD8\xFF` + `\xFF\xD9` EOI scan).
      - If no carrier header is present, defaults to raw container offset $0$. Decryption pipeline executes seamlessly across all carriers without manual parameter configuration.
+
+4. **Decryption Original Timestamp Restoration & Anti-Timestomping**:
+   - The original file's `lastModified` timestamp is serialized into bytes 144..151 of the masked metadata blob during encryption.
+   - Upon successful decryption, the original timestamp is recovered and applied to the decrypted output `File` object.
+   - The UI provides an instant 1-click command (`(Get-Item ...).LastWriteTime`) to restore the original creation/modification timeline on the host OS filesystem ($MFT), defeating timeline correlation forensics.
 
 ---
 
@@ -157,11 +167,14 @@ To mitigate memory acquisition attacks (e.g. cold boot dump, Volatility triage, 
 1. **Inactivity Auto-Purge (5-Minute Idle Timer)**:
    - Tracks user input events (`mousemove`, `mousedown`, `keydown`, `scroll`, `touchstart`).
    - If no interaction occurs within 5 minutes (300,000 ms), the application immediately zeroizes and purges all 4 cryptographic keys from active component state.
-2. **Panic Memory Scrub**:
+2. **Tab Visibility Guard (Accelerated Background Scrub)**:
+   - Listens to the `visibilitychange` event.
+   - If the user switches tabs or minimizes the browser (`document.visibilityState === 'hidden'`) while processing is idle, the key wipe timer is accelerated to 60 seconds (1 minute), reducing volatile memory exposure window.
+3. **Panic Memory Scrub**:
    - Provides an immediate single-click panic button in the UI (`#panic-scrub-keys-btn`) that clears all 4 keys from active memory state and form inputs.
-3. **WASM Linear Memory & Worker Buffer Zeroization**:
+4. **WASM Linear Memory & Worker Buffer Zeroization**:
    - Cryptographic worker pools and WebAssembly memory buffers allocate deterministic memory spaces that are explicitly wiped via `Uint8Array.fill(0)` upon chunk completion or processing abort.
-4. **Honest Forensic Boundary**:
+5. **Honest Forensic Boundary**:
    - Browser V8 heap string representations are garbage-collected asynchronously according to host engine memory pressure. Native zeroization applies strictly to typed arrays, WASM buffers, and active state references.
 
 

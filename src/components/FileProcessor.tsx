@@ -761,6 +761,27 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             </div>
           )}
 
+          {result.mode === 'DECRYPT' && result.lastModified && (
+            <div className="mt-2 pt-2 border-t border-emerald-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] font-mono text-emerald-200/90">
+              <span>
+                🕒 <strong>Original Timestamp:</strong> {new Date(result.lastModified).toLocaleString()}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const psCmd = `(Get-Item "${result.fileName}").LastWriteTime = "${new Date(result.lastModified!).toISOString()}"`;
+                  if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                    navigator.clipboard.writeText(psCmd);
+                  }
+                }}
+                title="Copy PowerShell command to apply original timestamp to local file"
+                className="text-emerald-400 hover:text-emerald-300 underline cursor-pointer text-[10px] self-start sm:self-auto"
+              >
+                Copy Anti-Timestomp Command
+              </button>
+            </div>
+          )}
+
           {downloadBlobUrl && (
             <div className="mt-3 pt-3 border-t border-emerald-900/50 flex flex-wrap items-center justify-between gap-2">
               <span className="text-[11px] text-emerald-300/90 flex items-center gap-1">
