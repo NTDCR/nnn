@@ -209,11 +209,15 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     e.preventDefault();
     setIsDragging(false);
     if (isProcessing) return;
-    const item = e.dataTransfer.items?.[0];
-    const entry = (item as unknown as { webkitGetAsEntry?: () => { isDirectory?: boolean } | null })?.webkitGetAsEntry?.();
-    if (entry && entry.isDirectory) {
-      setError('Folders are not supported. Please select or drop files.');
-      return;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      for (let i = 0; i < e.dataTransfer.items.length; i++) {
+        const item = e.dataTransfer.items[i];
+        const entry = (item as unknown as { webkitGetAsEntry?: () => { isDirectory?: boolean } | null })?.webkitGetAsEntry?.();
+        if (entry && entry.isDirectory) {
+          setError('Folders are not supported. Please select or drop files.');
+          return;
+        }
+      }
     }
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       setSelectedFiles(Array.from(e.dataTransfer.files));

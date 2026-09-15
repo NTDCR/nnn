@@ -36,13 +36,14 @@ export default function App() {
   // Anti-Forensics: Emergency Stealth Cloak Mode (Esc / Alt+C)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isSpecModalOpen && e.key === 'Escape') return;
       if (e.key === 'Escape' || (e.altKey && (e.key === 'c' || e.key === 'C'))) {
         setIsCloaked((prev) => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isSpecModalOpen]);
 
   useEffect(() => {
     if (isCloaked) {

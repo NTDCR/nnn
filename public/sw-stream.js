@@ -84,12 +84,12 @@ self.addEventListener('message', (event) => {
       createdAt: Date.now(),
     });
 
-    // Cleanup unconsumed streams after 5 minutes
+    // Cleanup unconsumed streams after 1 hour (3,600,000 ms) to support paused download managers and slow networks
     setTimeout(() => {
       if (streamRegistry.has(streamId)) {
         streamRegistry.delete(streamId);
       }
-    }, 300000);
+    }, 3600000);
   }
 });
 
