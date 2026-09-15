@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   generateRandomKey,
   calculateEntropyScore,
@@ -80,6 +80,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   const [copyAllStatus, setCopyAllStatus] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [scrubbedNotice, setScrubbedNotice] = useState<string | null>(null);
+  const clipboardTimerRef = useRef<NodeJS.Timeout | number | null>(null);
 
   const keyList: { key: keyof CascadeKeys; label: string; index: number }[] = [
     { key: 'layer1ThreefishHex', label: 'Layer 1: Threefish-1024 Key', index: 0 },
@@ -152,6 +153,10 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
     return () => {
       clearTimeout(timeoutId);
+      if (clipboardTimerRef.current) {
+        clearTimeout(clipboardTimerRef.current);
+        clipboardTimerRef.current = null;
+      }
       events.forEach((evt) => window.removeEventListener(evt, resetTimer));
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageUnload);
@@ -233,12 +238,16 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
       setCopiedIndex(index);
       setTimeout(() => setCopiedIndex(null), 2000);
       // Anti-Forensics: auto-wipe clipboard after 45 seconds to prevent persistence in OS clipboard history
-      setTimeout(() => {
+      if (clipboardTimerRef.current) {
+        clearTimeout(clipboardTimerRef.current);
+      }
+      clipboardTimerRef.current = setTimeout(() => {
         try {
           navigator.clipboard?.writeText('');
         } catch {
           // Ignore
         }
+        clipboardTimerRef.current = null;
       }, 45000);
     }
   };
@@ -264,12 +273,16 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
       setCopyAllStatus(true);
       setTimeout(() => setCopyAllStatus(false), 2500);
       // Anti-Forensics: auto-wipe clipboard after 45 seconds to prevent persistence in OS clipboard history
-      setTimeout(() => {
+      if (clipboardTimerRef.current) {
+        clearTimeout(clipboardTimerRef.current);
+      }
+      clipboardTimerRef.current = setTimeout(() => {
         try {
           navigator.clipboard?.writeText('');
         } catch {
           // Ignore
         }
+        clipboardTimerRef.current = null;
       }, 45000);
     }
   };

@@ -109,7 +109,8 @@ self.addEventListener('fetch', (event) => {
       return;
     }
 
-    const safeFilename = entry.filename.replace(/["\r\n]/g, '_');
+    // Sanitize quotes, semicolons, backslashes, and control characters to prevent header injection or tokenizer truncation
+    const safeFilename = entry.filename.replace(/[";\r\n\\]/g, '_');
     const encodedFilename = encodeURIComponent(safeFilename);
 
     const headers = new Headers({

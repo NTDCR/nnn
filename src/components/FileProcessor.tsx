@@ -186,6 +186,9 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
 
   useEffect(() => {
     onProcessingChange?.(isProcessing);
+    return () => {
+      onProcessingChange?.(false);
+    };
   }, [isProcessing, onProcessingChange]);
 
   const clearDownloadUrl = () => {
