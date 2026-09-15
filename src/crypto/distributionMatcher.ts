@@ -105,20 +105,17 @@ export function verifyKraftMcMillan(): { valid: boolean; kraftSum: number; expec
 }
 
 /**
- * Forward Distribution Matcher (Entropy Shaping)
- * Losslessly transforms uniform cryptographic bits into a biased symbol stream
- * with empirical Shannon entropy calibrated to ~6.90 bits/byte.
+ * In-place forward distribution matcher.
+ * Shapes input bits directly into a pre-allocated output buffer to eliminate temporary GC churn.
+ * Returns the number of shaped bytes written into outBuf starting at outOffset.
  */
-export function shapeCiphertext(input: Uint8Array): Uint8Array {
-  if (input.length === 0) return new Uint8Array(0);
-
-  // Allocate buffer based on worst-case expansion (shortest prefix 5 bits -> 8/5 = 1.6x)
-  const maxCap = Math.ceil(input.length * 1.65) + 64;
-  const outBuf = new Uint8Array(maxCap);
-  let outPos = 0;
+export function shapeInto(input: Uint8Array, outBuf: Uint8Array, outOffset: number = 0): number {
+  if (input.length === 0) return 0;
+  let outPos = outOffset;
   let bitBuf = 0;
   let bitCount = 0;
   let inPos = 0;
+  const maxOut = outBuf.length;
 
   while (inPos < input.length || bitCount > 0) {
     while (bitCount < MAX_CODEWORD_LENGTH && inPos < input.length) {
@@ -130,6 +127,9 @@ export function shapeCiphertext(input: Uint8Array): Uint8Array {
       const window = (bitBuf >>> (bitCount - MAX_CODEWORD_LENGTH)) & (LUT_SIZE - 1);
       const s = LUT_SYMBOL[window];
       const len = LUT_LENGTH[window];
+      if (outPos >= maxOut) {
+        throw new Error(`Output buffer overflow in shapeInto: ${outPos} >= ${maxOut}`);
+      }
       outBuf[outPos++] = s;
       bitCount -= len;
       bitBuf = bitBuf & ((1 << bitCount) - 1);
@@ -139,6 +139,9 @@ export function shapeCiphertext(input: Uint8Array): Uint8Array {
       const window = (bitBuf << pad) & (LUT_SIZE - 1);
       const s = LUT_SYMBOL[window];
       const len = LUT_LENGTH[window];
+      if (outPos >= maxOut) {
+        throw new Error(`Output buffer overflow in shapeInto: ${outPos} >= ${maxOut}`);
+      }
       outBuf[outPos++] = s;
       if (len <= bitCount) {
         bitCount -= len;
@@ -150,7 +153,22 @@ export function shapeCiphertext(input: Uint8Array): Uint8Array {
     }
   }
 
-  return outBuf.subarray(0, outPos);
+  return outPos - outOffset;
+}
+
+/**
+ * Forward Distribution Matcher (Entropy Shaping)
+ * Losslessly transforms uniform cryptographic bits into a biased symbol stream
+ * with empirical Shannon entropy calibrated to ~6.90 bits/byte.
+ */
+export function shapeCiphertext(input: Uint8Array): Uint8Array {
+  if (input.length === 0) return new Uint8Array(0);
+
+  // Allocate buffer based on worst-case expansion (shortest prefix 5 bits -> 8/5 = 1.6x)
+  const maxCap = Math.ceil(input.length * 1.65) + 64;
+  const outBuf = new Uint8Array(maxCap);
+  const shapedLen = shapeInto(input, outBuf, 0);
+  return outBuf.subarray(0, shapedLen);
 }
 
 /**
@@ -243,19 +261,18 @@ export function calculateShannonMetrics(data: Uint8Array): {
 export const FIXED_SHAPED_CHUNK_SIZE = 1219200;
 
 export function shapeChunkFixed(encChunk: Uint8Array): Uint8Array {
-  const shaped = shapeCiphertext(encChunk);
-  if (shaped.length > FIXED_SHAPED_CHUNK_SIZE) {
-    throw new Error(`Shaped chunk overflowed fixed slot: ${shaped.length} > ${FIXED_SHAPED_CHUNK_SIZE}`);
-  }
   const fixed = new Uint8Array(FIXED_SHAPED_CHUNK_SIZE);
-  fixed.set(shaped, 0);
+  const shapedLen = shapeInto(encChunk, fixed, 0);
+  if (shapedLen > FIXED_SHAPED_CHUNK_SIZE) {
+    throw new Error(`Shaped chunk overflowed fixed slot: ${shapedLen} > ${FIXED_SHAPED_CHUNK_SIZE}`);
+  }
 
-  // Pad remainder by cycling shaped bytes to maintain calibrated ~6.90 b/B distribution
-  let padOff = shaped.length;
+  // Pad remainder by cycling shaped bytes directly inside fixed to maintain calibrated ~6.90 b/B distribution
+  let padOff = shapedLen;
   let copyPos = 0;
   while (padOff < FIXED_SHAPED_CHUNK_SIZE) {
-    fixed[padOff++] = shaped[copyPos++];
-    if (copyPos >= shaped.length) copyPos = 0;
+    fixed[padOff++] = fixed[copyPos++];
+    if (copyPos >= shapedLen) copyPos = 0;
   }
   return fixed;
 }

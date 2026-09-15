@@ -33,6 +33,7 @@ import {
   FIXED_SHAPED_CHUNK_SIZE,
   shapeChunkFixed,
   unshapeChunkFixed,
+  shapeInto,
 } from './distributionMatcher.ts';
 
 export {
@@ -53,6 +54,9 @@ export {
   FIXED_SHAPED_CHUNK_SIZE,
   shapeChunkFixed,
   unshapeChunkFixed,
+  shapeInto,
+  sha256,
+  hmac,
 };
 
 const METADATA_MAGIC = 0x464B4E31; // "FKN1"

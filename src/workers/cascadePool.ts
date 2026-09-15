@@ -382,6 +382,7 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
         k1,
         k2,
         k4,
+        isMobileDevice,
         antiForensicPadding: options.antiForensicPadding,
         outputFileName: options.outputFileName,
         entropyShaping: options.entropyShaping,
@@ -397,6 +398,7 @@ export async function processFileWithPool(options: ProcessFileOptions): Promise<
         k1,
         k2,
         k4,
+        isMobileDevice,
         outputFileName: options.outputFileName,
         onStart,
         onProgress,
@@ -427,6 +429,7 @@ async function executePoolEncryption(params: {
   k1: Uint8Array;
   k2: Uint8Array;
   k4: Uint8Array;
+  isMobileDevice?: boolean;
   antiForensicPadding?: number;
   outputFileName?: string;
   entropyShaping?: boolean;
@@ -435,7 +438,7 @@ async function executePoolEncryption(params: {
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
   signal?: AbortSignal;
 }): Promise<WorkerSuccessMessage> {
-  const { file, workers, k1, k2, k4, antiForensicPadding, outputFileName, entropyShaping, onStart, onProgress, onChunkOutput, signal } = params;
+  const { file, workers, k1, k2, k4, isMobileDevice, antiForensicPadding, outputFileName, entropyShaping, onStart, onProgress, onChunkOutput, signal } = params;
   const originalSize = file.size;
   const chunkCount = Math.max(1, Math.ceil(originalSize / CHUNK_SIZE));
 
@@ -695,7 +698,7 @@ async function executePoolEncryption(params: {
       completedChunksCount++;
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
-      const maxBuffered = Math.max(16, workers.length * 4);
+      const maxBuffered = isMobileDevice ? 4 : Math.max(16, workers.length * 4);
       while (completedChunks.size >= maxBuffered && !writerError && !workerError) {
         if (signal?.aborted) throw new Error('Aborted');
         await new Promise<void>((resolve) => {
@@ -858,13 +861,14 @@ async function executePoolDecryption(params: {
   k1: Uint8Array;
   k2: Uint8Array;
   k4: Uint8Array;
+  isMobileDevice?: boolean;
   outputFileName?: string;
   onStart?: (totalChunks: number, totalBytes: number) => void;
   onProgress?: (progress: WorkerProgressMessage) => void;
   onChunkOutput: (chunkBytes: Uint8Array) => Promise<void> | void;
   signal?: AbortSignal;
 }): Promise<WorkerSuccessMessage> {
-  const { file, workers, k1, k2, k4, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
+  const { file, workers, k1, k2, k4, isMobileDevice, outputFileName, onStart, onProgress, onChunkOutput, signal } = params;
   const fileSize = file.size;
 
   // 1. Detect Polyglot Carrier header if present (WAVE, ISO-9660, or MP4)
@@ -965,7 +969,7 @@ async function executePoolDecryption(params: {
   }
 
   let hmacKey: Uint8Array | null = deriveHmacKey(k1, k2);
-  const hmacClient = new HmacWorkerClient(hmacKey);
+  const decryptionHasher = hmac.create(sha256, hmacKey);
 
   const isEntropyShaped = Boolean(metadata.entropyShaped);
 
@@ -1010,6 +1014,9 @@ async function executePoolDecryption(params: {
         if (workerError) throw workerError;
         const finalBytes = completedChunks.get(nextEmitChunk)!;
         completedChunks.delete(nextEmitChunk);
+
+        // Sequential zero-copy in-place HMAC calculation without buffer.slice() GC churn
+        decryptionHasher.update(finalBytes);
 
         await onChunkOutput(finalBytes);
 
@@ -1170,15 +1177,12 @@ async function executePoolDecryption(params: {
         plainBytes.subarray(validLen).fill(0);
       }
 
-      // Decoupled concurrent HMAC computation in background worker
-      hmacClient.updateChunk(idx, finalBytes);
-
       completedChunks.set(idx, finalBytes);
       drainReadyChunks();
       completedChunksCount++;
 
       // Event-driven backpressure: wake instantly via microtask when output writes advance
-      const maxBuffered = Math.max(16, workers.length * 4);
+      const maxBuffered = isMobileDevice ? 4 : Math.max(16, workers.length * 4);
       while (completedChunks.size >= maxBuffered && !writerError && !workerError) {
         if (signal?.aborted) throw new Error('Aborted');
         await new Promise<void>((resolve) => {
@@ -1218,7 +1222,7 @@ async function executePoolDecryption(params: {
   if (writerError) throw writerError;
 
   // Adversarial check: Verify HMAC integrity of entire recovered plaintext
-  const computedHmac = await hmacClient.finalize(chunkCount);
+  const computedHmac = decryptionHasher.digest();
   if (!constantTimeCompare(computedHmac, metadata.hmacIntegrity)) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
@@ -1256,7 +1260,6 @@ async function executePoolDecryption(params: {
     lastModified: metadata?.lastModified,
   };
   } finally {
-    hmacClient.destroy();
     if (hmacKey) {
       hmacKey.fill(0);
       hmacKey = null;

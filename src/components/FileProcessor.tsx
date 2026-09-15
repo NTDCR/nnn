@@ -452,8 +452,12 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             try {
               await streamSession.write(chunkBytes);
             } finally {
-              if (chunkBytes.buffer && chunkBytes.buffer.byteLength > 0) {
-                chunkBytes.fill(0);
+              try {
+                if (chunkBytes.buffer && !chunkBytes.buffer.detached && chunkBytes.byteLength > 0) {
+                  chunkBytes.fill(0);
+                }
+              } catch {
+                // Buffer detached via zero-copy transfer - already transferred from current thread memory
               }
             }
           } else {

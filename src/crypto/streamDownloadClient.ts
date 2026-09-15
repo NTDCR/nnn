@@ -130,6 +130,17 @@ export async function createStreamDownloadSession(options: {
       }
     }, 90000);
 
+    // Heartbeat ping interval to keep Service Worker active during long downloads on Firefox/Safari
+    const heartbeatTimer = setInterval(() => {
+      if (!isCancelled) {
+        try {
+          channel.port1.postMessage({ type: 'PING' });
+        } catch {
+          // Ignore
+        }
+      }
+    }, 10000);
+
     const write = async (chunk: Uint8Array): Promise<void> => {
       if (isCancelled || options.signal?.aborted) {
         throw new Error(cancelReason || 'Aborted');
@@ -155,12 +166,15 @@ export async function createStreamDownloadSession(options: {
       }
       pullPending = false;
 
-      // Transfer ArrayBuffer slice to Service Worker with zero-copy
-      const transferBuf = chunk.slice().buffer;
+      // Transfer ArrayBuffer with true zero-copy when spanning full buffer, or slice if sub-allocated
+      const transferBuf = (chunk.byteOffset === 0 && chunk.byteLength === chunk.buffer.byteLength)
+        ? chunk.buffer
+        : chunk.slice().buffer;
       channel.port1.postMessage({ type: 'CHUNK', chunk: transferBuf }, [transferBuf]);
     };
 
     const close = async (): Promise<void> => {
+      clearInterval(heartbeatTimer);
       channel.port1.postMessage({ type: 'CLOSE' });
       setTimeout(() => {
         try {
@@ -172,6 +186,7 @@ export async function createStreamDownloadSession(options: {
     };
 
     const abort = async (reason?: string): Promise<void> => {
+      clearInterval(heartbeatTimer);
       channel.port1.postMessage({ type: 'ABORT', error: reason });
       try {
         channel.port1.close();
