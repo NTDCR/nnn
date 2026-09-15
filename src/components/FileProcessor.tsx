@@ -299,17 +299,23 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
 
     // Output target naming
     const baseRawName = inputSource.name.replace(/^.*[\\/]/, '').replace(/[/\\?%*:|"<>]/g, '_');
-    const safeRawName = baseRawName.replace(/\.part[-_]?\d+$/i, '');
+    const safeRawName = baseRawName.replace(/\.part[-_]?\d+$/i, '').trim().replace(/[. ]+$/, '') || 'file';
     let targetFileName: string;
     if (action === 'ENCRYPT') {
       targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : `${safeRawName}.bin`;
     } else {
-      const stripped = safeRawName.replace(/\.(bin|iso|wav|mp4)$/i, '');
+      const stripped = safeRawName.replace(/\.(bin|iso|wav|mp4)$/i, '').trim().replace(/[. ]+$/, '');
       if (stripped.length > 0 && stripped !== safeRawName) {
         targetFileName = stripped;
       } else {
         targetFileName = `decrypted_${safeRawName.length > 0 ? safeRawName : 'file'}`;
       }
+    }
+
+    // Windows NTFS/FAT32: file names cannot end with trailing dots or spaces
+    targetFileName = targetFileName.trim().replace(/[. ]+$/, '');
+    if (!targetFileName) {
+      targetFileName = action === 'ENCRYPT' ? 'encrypted.bin' : 'decrypted_file';
     }
 
     if (hasFileSystemAccess && useDirectDiskWrite) {

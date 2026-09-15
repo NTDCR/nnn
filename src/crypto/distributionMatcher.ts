@@ -266,6 +266,7 @@ export function shapeChunkFixed(encChunk: Uint8Array): Uint8Array {
   if (shapedLen > FIXED_SHAPED_CHUNK_SIZE) {
     throw new Error(`Shaped chunk overflowed fixed slot: ${shapedLen} > ${FIXED_SHAPED_CHUNK_SIZE}`);
   }
+  if (shapedLen === 0) return fixed;
 
   // Pad remainder by cycling shaped bytes directly inside fixed to maintain calibrated ~6.90 b/B distribution
   let padOff = shapedLen;

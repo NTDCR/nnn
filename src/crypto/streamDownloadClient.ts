@@ -189,7 +189,7 @@ export async function createStreamDownloadSession(options: {
       options.signal?.removeEventListener('abort', onSignalAbort);
       clearTimeout(cleanupFallbackTimer);
       clearInterval(heartbeatTimer);
-      channel.port1.postMessage({ type: 'CLOSE' });
+      // Allow 60 seconds for slow disk I/O and large stream buffers to finish writing before tearing down
       setTimeout(() => {
         try {
           channel.port1.close();
@@ -199,7 +199,7 @@ export async function createStreamDownloadSession(options: {
         if (document.body.contains(iframe)) {
           document.body.removeChild(iframe);
         }
-      }, 5000);
+      }, 60000);
     };
 
     const abort = async (reason?: string): Promise<void> => {
