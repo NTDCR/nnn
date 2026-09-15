@@ -212,6 +212,14 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     if (ok) {
       setCopiedIndex(index);
       setTimeout(() => setCopiedIndex(null), 2000);
+      // Anti-Forensics: auto-wipe clipboard after 45 seconds to prevent persistence in OS clipboard history
+      setTimeout(() => {
+        try {
+          navigator.clipboard?.writeText('');
+        } catch {
+          // Ignore
+        }
+      }, 45000);
     }
   };
 
@@ -235,6 +243,14 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     if (ok) {
       setCopyAllStatus(true);
       setTimeout(() => setCopyAllStatus(false), 2500);
+      // Anti-Forensics: auto-wipe clipboard after 45 seconds to prevent persistence in OS clipboard history
+      setTimeout(() => {
+        try {
+          navigator.clipboard?.writeText('');
+        } catch {
+          // Ignore
+        }
+      }, 45000);
     }
   };
 
@@ -527,7 +543,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
               <div className="relative flex items-center">
                 <input
                   id={`key-input-layer-${idx + 1}`}
-                  name={`fortknox_key_layer_${idx + 1}`}
+                  name={`sys_k_${idx + 1}`}
                   type={isVisible ? 'text' : 'password'}
                   autoComplete="off"
                   data-1p-ignore="true"

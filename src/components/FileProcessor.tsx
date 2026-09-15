@@ -322,6 +322,15 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       }
     }
 
+    if (!writableStreamRef.current && !streamSession && inputSource.size > 250 * 1024 * 1024) {
+      setError(
+        'Direct disk streaming is unavailable in this private/restricted browsing context. ' +
+        'Processing files > 250 MB in memory would crash the browser tab. ' +
+        'Please use standard browsing mode or a browser supporting the File System Access API (Chrome/Edge).'
+      );
+      return;
+    }
+
     setIsProcessing(true);
     await acquireWakeLock();
 

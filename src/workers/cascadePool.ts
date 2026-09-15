@@ -104,6 +104,16 @@ export class HmacWorkerClient {
     }
   }
 
+  public updateChunkTransferable(chunkIndex: number, chunkBuffer: ArrayBuffer): void {
+    if (this.worker) {
+      this.worker.postMessage({ action: 'UPDATE_CHUNK', chunkIndex, chunkData: chunkBuffer }, [chunkBuffer]);
+    } else if (this.fallbackHasher) {
+      const b = new Uint8Array(chunkBuffer);
+      this.fallbackPending.set(chunkIndex, b);
+      this.drainFallback();
+    }
+  }
+
   private drainFallback(): void {
     if (!this.fallbackHasher) return;
     while (this.fallbackPending.has(this.nextExpectedChunk)) {
@@ -469,10 +479,21 @@ async function executePoolEncryption(params: {
   } else if (isIsoCarrier) {
     carrierHeader = createIsoCarrierHeader(totalContainerBytes);
   } else if (isMp4Carrier) {
-    carrierHeader = createMp4CarrierHeader(totalContainerBytes, { proportionalDuration: true });
+    carrierHeader = createMp4CarrierHeader(totalContainerBytes, { proportionalDuration: true, maxDurationSec: 7200 });
   }
   const totalBytes = (carrierHeader ? carrierHeader.length : 0) + totalContainerBytes;
   onStart?.(chunkCount, totalBytes);
+  onProgress?.({
+    type: 'PROGRESS',
+    phase: 'ENCRYPTING',
+    currentChunk: 0,
+    totalChunks: chunkCount,
+    currentLayer: 4,
+    processedBytes: 0,
+    totalBytes: originalSize,
+    speedMBs: 0,
+    etaSeconds: 0,
+  });
 
   if (carrierHeader) {
     await onChunkOutput(carrierHeader);
@@ -636,17 +657,16 @@ async function executePoolEncryption(params: {
       const rawBuffer = await getChunkSlice(idx);
       slicePrefetchMap.delete(idx);
       const rawBytes = new Uint8Array(rawBuffer);
+      const rawLen = rawBytes.length;
 
       const chunkWithTags = new Uint8Array(ENCRYPTED_CHUNK_SIZE);
       chunkWithTags.set(rawBytes, 0);
-      if (rawBytes.length < CHUNK_SIZE) {
-        fillRandomBytes(chunkWithTags.subarray(rawBytes.length, CHUNK_SIZE));
+      if (rawLen < CHUNK_SIZE) {
+        fillRandomBytes(chunkWithTags.subarray(rawLen, CHUNK_SIZE));
       }
 
-      // Offload to background HMAC worker without blocking main event loop
-      hmacClient.updateChunk(idx, rawBytes);
-      const rawLen = rawBytes.length;
-      rawBytes.fill(0);
+      // Offload to background HMAC worker without blocking main event loop (zero-copy buffer transfer)
+      hmacClient.updateChunkTransferable(idx, rawBuffer);
 
       // Delegate chunk encryption to worker thread
       const encryptedBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -942,6 +962,17 @@ async function executePoolDecryption(params: {
   const hmacClient = new HmacWorkerClient(hmacKey);
 
   onStart?.(chunkCount, originalSize);
+  onProgress?.({
+    type: 'PROGRESS',
+    phase: 'DECRYPTING',
+    currentChunk: 0,
+    totalChunks: chunkCount,
+    currentLayer: 1,
+    processedBytes: 0,
+    totalBytes: originalSize,
+    speedMBs: 0,
+    etaSeconds: 0,
+  });
 
   const startTime = performance.now();
   let processedBytes = 0;

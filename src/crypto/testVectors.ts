@@ -13,7 +13,7 @@ export interface TestVectorResult {
   executionTimeMs: number;
 }
 
-export const TOTAL_TEST_COUNT = 18;
+export const TOTAL_TEST_COUNT = 22;
 
 import { ChaCha20Poly1305 } from './chacha20poly1305.ts';
 import { Serpent256 } from './serpent256.ts';
@@ -795,6 +795,162 @@ export async function runSelfVerificationTests(
     });
   }
 
+  // 19. Complete Prefix Tree Kraft-McMillan Equality
+  try {
+    const t0 = performance.now();
+    const { verifyKraftMcMillan } = await import('./distributionMatcher.ts');
+    const km = verifyKraftMcMillan();
+    const t1 = performance.now();
+    const passed = km.valid && Math.abs(km.kraftSum - 1.0) < 1e-9;
+
+    report({
+      suite: 'Distribution Matcher & Entropy Shaping',
+      name: 'Complete Prefix Tree Kraft-McMillan Equality (sum 2^-Li = 1.0)',
+      passed,
+      expectedHex: 'Kraft-McMillan sum = 1.00000000, Theoretical H = 6.8984 b/B',
+      actualHex: passed
+        ? `Kraft-McMillan sum = ${km.kraftSum.toFixed(8)}, Theoretical H = ${km.expectedEntropy.toFixed(4)} b/B`
+        : `Invalid Kraft sum: ${km.kraftSum}`,
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    report({
+      suite: 'Distribution Matcher & Entropy Shaping',
+      name: 'Complete Prefix Tree Kraft-McMillan Equality (sum 2^-Li = 1.0)',
+      passed: false,
+      expectedHex: 'Kraft-McMillan sum = 1.00000000, Theoretical H = 6.8984 b/B',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
+  // 20. Distribution Matcher Empirical Shannon Entropy Calibration & Reversibility
+  try {
+    const t0 = performance.now();
+    const { shapeCiphertext, unshapeCiphertext, calculateShannonMetrics } = await import('./distributionMatcher.ts');
+    const rawBytes = new Uint8Array(65536);
+    let seed = 0x12345678;
+    for (let i = 0; i < rawBytes.length; i++) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      rawBytes[i] = (seed >>> 24) & 0xff;
+    }
+
+    const shaped = shapeCiphertext(rawBytes);
+    const ent = calculateShannonMetrics(shaped);
+    const unshaped = unshapeCiphertext(shaped, rawBytes.length);
+    const isReversible = bytesToHex(unshaped) === bytesToHex(rawBytes);
+    const entropyInRange = ent.entropy >= 6.88 && ent.entropy <= 6.92;
+    const passed = isReversible && entropyInRange;
+    const t1 = performance.now();
+
+    report({
+      suite: 'Distribution Matcher & Entropy Shaping',
+      name: 'Empirical Shannon Entropy Calibration (~6.90 b/B) & Reversibility',
+      passed,
+      expectedHex: 'Entropy = ~6.90 b/B (tolerance ±0.02), Bit-perfect reversible',
+      actualHex: passed
+        ? `Entropy = ${ent.entropy.toFixed(4)} b/B, Reversible=${isReversible}`
+        : `Entropy = ${ent.entropy.toFixed(4)} b/B (expected 6.88-6.92), Reversible=${isReversible}`,
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    report({
+      suite: 'Distribution Matcher & Entropy Shaping',
+      name: 'Empirical Shannon Entropy Calibration (~6.90 b/B) & Reversibility',
+      passed: false,
+      expectedHex: 'Entropy = ~6.90 b/B (tolerance ±0.02), Bit-perfect reversible',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
+  // 21. Metadata ECC (RS GF(2^8)) 32-Byte Corruption Self-Healing
+  try {
+    const t0 = performance.now();
+    const { protectMetadataBlob, healMetadataBlob, METADATA_CRITICAL_LEN } = await import('./reedsolomon.ts');
+    const meta = new Uint8Array(512);
+    for (let i = 0; i < METADATA_CRITICAL_LEN; i++) {
+      meta[i] = (i * 17 + 41) & 0xff;
+    }
+    protectMetadataBlob(meta);
+
+    const tampered = new Uint8Array(meta);
+    const corruptIndices = [3, 7, 15, 23, 31, 47, 59, 73, 89, 101, 115, 127, 133, 141, 149, 157];
+    for (const idx of corruptIndices) {
+      tampered[idx] ^= 0xa5;
+    }
+
+    const healRes = healMetadataBlob(tampered);
+    const restoredExact = bytesToHex(tampered.subarray(0, METADATA_CRITICAL_LEN)) === bytesToHex(meta.subarray(0, METADATA_CRITICAL_LEN));
+    const passed = healRes.healed && healRes.correctedCount === corruptIndices.length && restoredExact;
+    const t1 = performance.now();
+
+    report({
+      suite: 'Industrial Forward Error Correction',
+      name: 'Metadata ECC (RS GF(2^8)) 32-Byte Corruption Self-Healing',
+      passed,
+      expectedHex: `Healed ${corruptIndices.length} corrupted bytes, 100% header restoration`,
+      actualHex: passed
+        ? `Healed ${healRes.correctedCount} corrupted bytes, 100% header restoration`
+        : `Healed=${healRes.healed}, count=${healRes.correctedCount}, restored=${restoredExact}`,
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    report({
+      suite: 'Industrial Forward Error Correction',
+      name: 'Metadata ECC (RS GF(2^8)) 32-Byte Corruption Self-Healing',
+      passed: false,
+      expectedHex: 'Healed 16 corrupted bytes, 100% header restoration',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
+  // 22. Universal Polyglot Carrier Header Auto-Detection
+  try {
+    const t0 = performance.now();
+    const { detectCarrierPayloadOffset, createWavCarrierHeader, createIsoCarrierHeader, createMp4CarrierHeader } = await import('./format.ts');
+
+    const binRaw = new Uint8Array(256).fill(0xee);
+    const resBin = detectCarrierPayloadOffset(binRaw);
+    const binPassed = !resBin.isCarrier && resBin.payloadOffset === 0;
+
+    const wavHdr = createWavCarrierHeader(2048);
+    const resWav = detectCarrierPayloadOffset(wavHdr);
+    const wavPassed = resWav.isCarrier && resWav.carrierType === 'wav' && resWav.payloadOffset === 88252;
+
+    const isoHdr = createIsoCarrierHeader(2048);
+    const resIso = detectCarrierPayloadOffset(isoHdr);
+    const isoPassed = resIso.isCarrier && resIso.carrierType === 'iso' && resIso.payloadOffset === 43008;
+
+    const mp4Hdr = createMp4CarrierHeader(2048, { durationSec: 5 });
+    const resMp4 = detectCarrierPayloadOffset(mp4Hdr);
+    const mp4Passed = resMp4.isCarrier && resMp4.carrierType === 'mp4';
+
+    const passed = binPassed && wavPassed && isoPassed && mp4Passed;
+    const t1 = performance.now();
+
+    report({
+      suite: 'Anti-Forensic Carrier Polyglot',
+      name: 'Universal Header Probing & Offset Resolution (.bin, .iso, .wav, .mp4)',
+      passed,
+      expectedHex: 'Correct detection across BIN, WAV (88252), ISO (43008), MP4',
+      actualHex: passed
+        ? 'Correct detection across BIN, WAV (88252), ISO (43008), MP4'
+        : `BIN=${binPassed}, WAV=${wavPassed}, ISO=${isoPassed}, MP4=${mp4Passed}`,
+      executionTimeMs: Number((t1 - t0).toFixed(2)),
+    });
+  } catch (err) {
+    report({
+      suite: 'Anti-Forensic Carrier Polyglot',
+      name: 'Universal Header Probing & Offset Resolution (.bin, .iso, .wav, .mp4)',
+      passed: false,
+      expectedHex: 'Correct detection across BIN, WAV (88252), ISO (43008), MP4',
+      actualHex: String(err),
+      executionTimeMs: 0,
+    });
+  }
+
   return results;
 }
 
@@ -909,7 +1065,9 @@ async function simulateContainerWorkflow(
   let tamperCatchMeta = false;
   try {
     const tamperedMeta = new Uint8Array(maskedMetadata);
-    tamperedMeta[0] ^= 0xff;
+    for (let b = 0; b < 35; b++) {
+      tamperedMeta[b] ^= 0xff;
+    }
     const unmasked = await maskMetadataBlob(tamperedMeta, k4);
     decodeMetadataBlob(unmasked);
   } catch {

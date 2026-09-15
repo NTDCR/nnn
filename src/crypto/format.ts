@@ -702,6 +702,7 @@ export interface Mp4CarrierOptions {
   legacyFixed?: boolean;
   proportionalDuration?: boolean;
   durationSec?: number;
+  maxDurationSec?: number;
 }
 
 /**
@@ -896,8 +897,9 @@ export function createMp4CarrierHeader(payloadLength: number, options?: Mp4Carri
     let durationSec = options?.durationSec;
     if (durationSec === undefined) {
       // Nominal HD video bitrate: 2,000,000 bits per sec (250 KB/sec)
-      // Clamped to range 3s .. 86,400s (24 hours)
-      durationSec = Math.max(3, Math.min(86400, Math.round((payloadLength * 8) / 2000000)));
+      // Clamped to range 3s .. maxDurationSec (default 86,400s / 24 hours, or clamped to 7,200s in pool)
+      const maxDur = options?.maxDurationSec ?? 86400;
+      durationSec = Math.max(3, Math.min(maxDur, Math.round((payloadLength * 8) / 2000000)));
     }
 
     const movieDurationMs = durationSec * 1000;

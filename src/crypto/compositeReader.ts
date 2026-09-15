@@ -7,12 +7,14 @@
 export interface SliceableDataSource {
   readonly size: number;
   readonly name: string;
+  readonly lastModified?: number;
   slice(start: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
 }
 
 export class CompositeFileReader implements SliceableDataSource {
   public readonly size: number;
   public readonly name: string;
+  public readonly lastModified?: number;
   public readonly files: File[];
   private readonly offsets: number[];
 
@@ -22,6 +24,7 @@ export class CompositeFileReader implements SliceableDataSource {
     }
     const sorted = CompositeFileReader.sortParts([...files]);
     this.files = sorted;
+    this.lastModified = sorted[0]?.lastModified;
     this.offsets = [0];
     let total = 0;
     for (const f of sorted) {
