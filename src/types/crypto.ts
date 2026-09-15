@@ -31,6 +31,7 @@ export interface WorkerProgressMessage {
   totalBytes: number;
   speedMBs: number;
   etaSeconds: number;
+  entropyShaped?: boolean;
 }
 
 export interface WorkerSuccessMessage {

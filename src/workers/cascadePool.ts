@@ -473,11 +473,14 @@ async function executePoolEncryption(params: {
   const effectiveChunkSize = entropyShaping ? FIXED_SHAPED_CHUNK_SIZE : ENCRYPTED_CHUNK_SIZE;
   const totalContainerBytes = chunkCount * effectiveChunkSize + preMetaJitterLen + METADATA_SIZE + prefixJitterLen + POINTER_BLOCK_SIZE + suffixJitterLen;
 
+  const isEntropyShaped = Boolean(entropyShaping);
+  const fileLastModified = 'lastModified' in file && typeof file.lastModified === 'number' ? file.lastModified : undefined;
+
   let carrierHeader: Uint8Array | null = null;
   if (isWavCarrier) {
     carrierHeader = createWavCarrierHeader(totalContainerBytes);
   } else if (isIsoCarrier) {
-    carrierHeader = createIsoCarrierHeader(totalContainerBytes);
+    carrierHeader = createIsoCarrierHeader(totalContainerBytes, { lastModified: fileLastModified });
   } else if (isMp4Carrier) {
     carrierHeader = createMp4CarrierHeader(totalContainerBytes, { proportionalDuration: true, maxDurationSec: 7200 });
   }
@@ -493,6 +496,7 @@ async function executePoolEncryption(params: {
     totalBytes: originalSize,
     speedMBs: 0,
     etaSeconds: 0,
+    entropyShaped: isEntropyShaped,
   });
 
   if (carrierHeader) {
@@ -720,6 +724,7 @@ async function executePoolEncryption(params: {
         totalBytes: originalSize,
         speedMBs: Number(speedMBs.toFixed(1)),
         etaSeconds: Math.max(0, Math.round(etaSeconds)),
+        entropyShaped: isEntropyShaped,
       });
     }
   };
@@ -740,6 +745,7 @@ async function executePoolEncryption(params: {
     totalBytes: originalSize,
     speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
     etaSeconds: 0,
+    entropyShaped: isEntropyShaped,
   });
 
   // Finalize container metadata & tail pointer
@@ -961,6 +967,8 @@ async function executePoolDecryption(params: {
   let hmacKey: Uint8Array | null = deriveHmacKey(k1, k2);
   const hmacClient = new HmacWorkerClient(hmacKey);
 
+  const isEntropyShaped = Boolean(metadata.entropyShaped);
+
   onStart?.(chunkCount, originalSize);
   onProgress?.({
     type: 'PROGRESS',
@@ -972,6 +980,7 @@ async function executePoolDecryption(params: {
     totalBytes: originalSize,
     speedMBs: 0,
     etaSeconds: 0,
+    entropyShaped: isEntropyShaped,
   });
 
   const startTime = performance.now();
@@ -1198,6 +1207,7 @@ async function executePoolDecryption(params: {
         totalBytes: originalSize,
         speedMBs: Number(speedMBs.toFixed(1)),
         etaSeconds: Math.max(0, Math.round(etaSeconds)),
+        entropyShaped: isEntropyShaped,
       });
     }
   };
@@ -1224,6 +1234,7 @@ async function executePoolDecryption(params: {
     totalBytes: originalSize,
     speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
     etaSeconds: 0,
+    entropyShaped: isEntropyShaped,
   });
 
   const totalTimeMs = performance.now() - startTime;

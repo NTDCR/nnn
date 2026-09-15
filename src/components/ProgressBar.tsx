@@ -77,9 +77,15 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) 
             <Layers className="w-3 h-3 text-indigo-400" />
             4-Layer Cascade
           </span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-emerald-300 font-mono" title="Biased prefix-tree distribution matcher (~6.90 b/B Shannon entropy)">
-            ~6.90 b/B Shaper
-          </span>
+          {progress.entropyShaped ? (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-800/80 text-emerald-300 font-mono" title="Biased prefix-tree distribution matcher active (~6.90 b/B Shannon entropy)">
+              ~6.90 b/B Shaper
+            </span>
+          ) : (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono" title="Standard high-entropy ciphertext (8.00 b/B Shannon entropy)">
+              8.00 b/B Cipher
+            </span>
+          )}
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-purple-300 font-mono" title="Reed-Solomon Cross-Metadata Protection (64 bytes systematic parity)">
             RS-CMP Guard
           </span>

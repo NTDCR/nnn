@@ -138,9 +138,13 @@ export async function createStreamDownloadSession(options: {
       // Backpressure: wait for consumer pull if queue is not drained
       if (!pullPending) {
         await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, 300); // 300ms fallback safety interval
+          const timer = setTimeout(() => {
+            pullWaiter = null;
+            resolve();
+          }, 50); // 50ms fast fallback interval
           pullWaiter = () => {
             clearTimeout(timer);
+            pullWaiter = null;
             if (isCancelled || options.signal?.aborted) {
               reject(new Error(cancelReason || 'Aborted'));
             } else {

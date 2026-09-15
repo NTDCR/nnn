@@ -54,6 +54,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     return '.bin'; // Default 4-carrier standard extension
   });
 
+  const [useEntropyShaping, setUseEntropyShaping] = useState<boolean>(false);
+
   // Anti-Forensics: actively scrub legacy identifiable keys from browser LevelDB storage
   useEffect(() => {
     try {
@@ -420,12 +422,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         },
         coreConcurrency: coreMode,
         antiForensicPadding: calculatedPadding,
+        entropyShaping: useEntropyShaping,
         outputFileName: targetFileName,
         onProgress: (() => {
           let lastProgressTime = 0;
           return (p: Parameters<NonNullable<Parameters<typeof processFileWithPool>[0]['onProgress']>>[0]) => {
             const now = performance.now();
-            if (p.currentChunk === p.totalChunks || now - lastProgressTime >= 100) {
+            if (p.currentChunk === 0 || p.currentChunk === p.totalChunks || now - lastProgressTime >= 100) {
               lastProgressTime = now;
               setProgress(p);
             }
@@ -630,6 +633,20 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <label className="flex items-center gap-1.5 bg-purple-950/40 border border-purple-800/50 rounded-lg px-2.5 py-1 cursor-pointer select-none">
+            <input
+              id="entropy-shaper-toggle"
+              type="checkbox"
+              checked={useEntropyShaping}
+              onChange={(e) => setUseEntropyShaping(e.target.checked)}
+              disabled={isProcessing}
+              className="rounded border-purple-700 bg-purple-950 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+            />
+            <span className="text-[10px] sm:text-[11px] text-purple-200 font-mono" title="Enables biased prefix-tree distribution matching to shape entropy to ~6.90 b/B">
+              ~6.90 b/B Shaper
+            </span>
+          </label>
+
           <div className="flex items-center gap-1.5 bg-purple-950/40 border border-purple-800/50 rounded-lg px-2.5 py-1">
             <span className="text-[10px] sm:text-[11px] text-purple-300 font-mono">Format:</span>
             <select

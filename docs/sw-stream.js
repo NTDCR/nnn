@@ -41,7 +41,7 @@ self.addEventListener('message', (event) => {
         },
       },
       {
-        highWaterMark: 1,
+        highWaterMark: 4,
       }
     );
 

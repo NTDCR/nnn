@@ -573,7 +573,11 @@ function writeBothEndianU16(view: DataView, offset: number, val: number): void {
  * Natively mounts in Windows Explorer, macOS, Linux, and 7-Zip as a virtual disc containing DATA.BIN.
  * Provides authentic masquerade for multi-gigabyte (1 GB - 50 GB) archives.
  */
-export function createIsoCarrierHeader(payloadLength: number): Uint8Array {
+export interface IsoCarrierOptions {
+  lastModified?: number;
+}
+
+export function createIsoCarrierHeader(payloadLength: number, options?: IsoCarrierOptions): Uint8Array {
   const SECTOR_SIZE = 2048;
   const HEADER_SECTORS = 21;
   const payloadSectors = Math.ceil(payloadLength / SECTOR_SIZE);
@@ -611,7 +615,13 @@ export function createIsoCarrierHeader(payloadLength: number): Uint8Array {
   view.setUint8(pvdOffset + 156, 34);
   writeBothEndianU32(view, pvdOffset + 158, 20); // Sector 20
   writeBothEndianU32(view, pvdOffset + 166, SECTOR_SIZE);
-  header.set([124, 9, 14, 12, 0, 0, 0], pvdOffset + 174); // 2024-09-14
+  if (options?.lastModified) {
+    const d = new Date(options.lastModified);
+    const yr = Math.max(0, Math.min(255, d.getUTCFullYear() - 1900));
+    header.set([yr, d.getUTCMonth() + 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), 0], pvdOffset + 174);
+  } else {
+    header.set([124, 9, 14, 12, 0, 0, 0], pvdOffset + 174); // 2024-09-14
+  }
   header[pvdOffset + 181] = 0x02; // Directory flag
   writeBothEndianU16(view, pvdOffset + 184, 1);
   header[pvdOffset + 188] = 1;
@@ -619,7 +629,19 @@ export function createIsoCarrierHeader(payloadLength: number): Uint8Array {
 
   // Padding & Date fields (190..812)
   header.fill(0x20, pvdOffset + 190, pvdOffset + 813);
-  const nowAscii = new TextEncoder().encode('2026091412000000\0');
+  const nowAscii = options?.lastModified
+    ? (() => {
+        const d = new Date(options.lastModified);
+        const y = String(d.getUTCFullYear()).padStart(4, '0');
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        const h = String(d.getUTCHours()).padStart(2, '0');
+        const min = String(d.getUTCMinutes()).padStart(2, '0');
+        const s = String(d.getUTCSeconds()).padStart(2, '0');
+        const cs = String(Math.floor(d.getUTCMilliseconds() / 10)).padStart(2, '0');
+        return new TextEncoder().encode(`${y}${m}${day}${h}${min}${s}${cs}\0`);
+      })()
+    : new TextEncoder().encode('2026091412000000\0');
   const zeroAscii = new TextEncoder().encode('0000000000000000\0');
   header.set(nowAscii, pvdOffset + 813);
   header.set(nowAscii, pvdOffset + 830);
