@@ -72,6 +72,8 @@ self.addEventListener('message', (event) => {
           // Ignore abort error
         }
         streamRegistry.delete(streamId);
+      } else if (msg.type === 'PING') {
+        port.postMessage({ type: 'PONG' });
       }
     };
 
