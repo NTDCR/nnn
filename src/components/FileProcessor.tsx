@@ -310,14 +310,10 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
 
     // If not streaming direct to disk via File System Access API, stream via Service Worker download
     if (!writableStreamRef.current) {
-      const estimatedTotalSize =
-        action === 'ENCRYPT'
-          ? Math.ceil(inputSource.size / (1024 * 1024)) * 1048608 + 512 + 32
-          : undefined;
-
+      // Omit rigid Content-Length to allow dynamic chunked streaming without premature truncation
       streamSession = await createStreamDownloadSession({
         filename: targetFileName,
-        totalSize: estimatedTotalSize,
+        totalSize: undefined,
         signal: abortController.signal,
       });
 
@@ -435,7 +431,9 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             }
           } else if (streamSession) {
             await streamSession.write(chunkBytes);
-            chunkBytes.fill(0);
+            if (chunkBytes.buffer && chunkBytes.buffer.byteLength > 0) {
+              chunkBytes.fill(0);
+            }
           } else {
             memoryChunks.push(chunkBytes);
           }

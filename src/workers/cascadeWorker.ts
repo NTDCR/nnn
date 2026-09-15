@@ -6,6 +6,7 @@
 
 import { hexToBytes, GENERIC_DECRYPT_ERROR } from '../crypto/cascade.ts';
 import { createCascadeEngine, WasmCascadeInstance } from '../crypto/wasmBridge.ts';
+import { shapeChunkFixed, unshapeChunkFixed } from '../crypto/distributionMatcher.ts';
 
 const CHUNK_SIZE = 1048576; // 1 MB
 const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE + 32;
@@ -131,7 +132,7 @@ self.onmessage = async (e: MessageEvent) => {
   if (action === 'ENCRYPT_CHUNK') {
     try {
       if (!pooledEngine) throw new Error('Engine not initialized');
-      const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes } = data;
+      const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes, entropyShaped } = data;
       const chunkWithTags = new Uint8Array(chunkData);
       if (chunkWithTags.length < ENCRYPTED_CHUNK_SIZE) {
         throw new Error('Invalid chunk buffer size');
@@ -150,13 +151,23 @@ self.onmessage = async (e: MessageEvent) => {
       }
       chunkWithTags.set(tagChaCha, CHUNK_SIZE);
       chunkWithTags.set(tagAes, CHUNK_SIZE + 16);
+
+      let finalBuffer: ArrayBuffer;
+      if (entropyShaped) {
+        const shaped = shapeChunkFixed(chunkWithTags);
+        chunkWithTags.fill(0);
+        finalBuffer = shaped.buffer as ArrayBuffer;
+      } else {
+        finalBuffer = chunkWithTags.buffer as ArrayBuffer;
+      }
+
       postWorkerMessage(
         {
           type: 'CHUNK_DONE',
           chunkIndex,
-          data: chunkWithTags.buffer,
+          data: finalBuffer,
         },
-        [chunkWithTags.buffer]
+        [finalBuffer]
       );
     } catch (err: unknown) {
       self.postMessage({ type: 'ERROR', error: err instanceof Error ? err.message : 'Chunk encryption failed' });
@@ -167,8 +178,15 @@ self.onmessage = async (e: MessageEvent) => {
   if (action === 'DECRYPT_CHUNK') {
     try {
       if (!pooledEngine) throw new Error('Engine not initialized');
-      const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes } = data;
-      const chunkWithTags = new Uint8Array(chunkData);
+      const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes, entropyShaped } = data;
+      let chunkWithTags: Uint8Array;
+      if (entropyShaped) {
+        const shapedSlot = new Uint8Array(chunkData);
+        chunkWithTags = unshapeChunkFixed(shapedSlot, ENCRYPTED_CHUNK_SIZE);
+        shapedSlot.fill(0);
+      } else {
+        chunkWithTags = new Uint8Array(chunkData);
+      }
       if (chunkWithTags.length !== ENCRYPTED_CHUNK_SIZE) {
         throw new Error(GENERIC_DECRYPT_ERROR);
       }

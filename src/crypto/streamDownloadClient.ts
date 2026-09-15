@@ -152,9 +152,8 @@ export async function createStreamDownloadSession(options: {
       pullPending = false;
 
       // Transfer ArrayBuffer slice to Service Worker with zero-copy
-      const copy = new Uint8Array(chunk.length);
-      copy.set(chunk);
-      channel.port1.postMessage({ type: 'CHUNK', chunk: copy.buffer }, [copy.buffer]);
+      const transferBuf = chunk.slice().buffer;
+      channel.port1.postMessage({ type: 'CHUNK', chunk: transferBuf }, [transferBuf]);
     };
 
     const close = async (): Promise<void> => {

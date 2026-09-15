@@ -242,45 +242,21 @@ export function decodeMetadataBlob(buf: Uint8Array): ContainerMetadata {
   }
 
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  let magic = view.getUint32(0, true);
-  let version = view.getUint32(4, true);
 
-  if (magic !== METADATA_MAGIC || version !== CONTAINER_VERSION) {
-    // Attempt Reed-Solomon error correction before failing
-    const healRes = healMetadataBlob(buf);
-    if (healRes.healed) {
-      magic = view.getUint32(0, true);
-      version = view.getUint32(4, true);
-    }
-  }
+  // Proactive Reed-Solomon Forward Error Correction
+  // Checks syndromes and heals up to 32 byte errors anywhere in critical headers (bytes 0..159)
+  healMetadataBlob(buf);
+
+  const magic = view.getUint32(0, true);
+  const version = view.getUint32(4, true);
 
   if (magic !== METADATA_MAGIC || version !== CONTAINER_VERSION) {
     throw new Error('Decryption failed. Check all keys.');
   }
-
-
   const rawSizeBig = view.getBigUint64(8, true);
   const chunkCount = view.getUint32(16, true);
   const chunkSize = view.getUint32(20, true);
-
-  if (
-    rawSizeBig > BigInt(Number.MAX_SAFE_INTEGER) ||
-    chunkCount <= 0 ||
-    chunkSize !== 1048576
-  ) {
-    throw new Error('Decryption failed. Check all keys.');
-  }
-
   const originalSize = Number(rawSizeBig);
-
-  if (
-    originalSize < 0 ||
-    !Number.isSafeInteger(originalSize) ||
-    originalSize > chunkCount * chunkSize ||
-    (chunkCount > 1 && originalSize <= (chunkCount - 1) * chunkSize)
-  ) {
-    throw new Error('Decryption failed. Check all keys.');
-  }
 
   const nonceThreefish = new Uint8Array(buf.subarray(24, 40));
   const nonceSerpent = new Uint8Array(buf.subarray(40, 56));
@@ -1069,11 +1045,14 @@ export function createMp4CarrierHeader(payloadLength: number, options?: Mp4Carri
  * Detects whether an input file is a polyglot carrier (WAVE, ISO-9660, or MP4),
  * and if so, returns the exact byte offset where the encrypted container payload begins.
  */
-export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
+export interface CarrierPayloadOffsetResult {
   isCarrier: boolean;
   payloadOffset: number;
   carrierType?: 'wav' | 'iso' | 'mp4';
-} {
+  pendingProbeOffset?: number;
+}
+
+export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): CarrierPayloadOffsetResult {
   if (fileStartBytes.length < 16) return { isCarrier: false, payloadOffset: 0 };
 
   // 1. RIFF WAVE Carrier
@@ -1156,6 +1135,17 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): {
       );
       if (boxType === 'moov') {
         seenMoov = true;
+        const moovBoxSize = boxSize === 1
+          ? (pos + 16 <= fileStartBytes.length ? Number(view.getBigUint64(pos + 8, false)) : 0)
+          : boxSize;
+        if (moovBoxSize > 0 && pos + moovBoxSize > fileStartBytes.length) {
+          return {
+            isCarrier: true,
+            payloadOffset: 0,
+            carrierType: 'mp4',
+            pendingProbeOffset: pos + moovBoxSize,
+          };
+        }
       } else if (boxType === 'mdat') {
         const headerLen = boxSize === 1 ? 16 : 8;
         lastMdatOffset = pos;

@@ -23,11 +23,7 @@ import {
   createIsoCarrierHeader,
   createMp4CarrierHeader,
   detectCarrierPayloadOffset,
-  shapeCiphertext,
-  unshapeCiphertext,
   FIXED_SHAPED_CHUNK_SIZE,
-  shapeChunkFixed,
-  unshapeChunkFixed,
 } from '../crypto/format.ts';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -520,12 +516,7 @@ async function executePoolEncryption(params: {
         if (workerError) throw workerError;
         const chunk = completedChunks.get(nextEmitChunk)!;
         completedChunks.delete(nextEmitChunk);
-        if (entropyShaping) {
-          const shapedChunk = shapeChunkFixed(chunk);
-          await onChunkOutput(shapedChunk);
-        } else {
-          await onChunkOutput(chunk);
-        }
+        await onChunkOutput(chunk);
         nextEmitChunk++;
         notifyDrain();
       }
@@ -669,6 +660,7 @@ async function executePoolEncryption(params: {
             nonceSerpent,
             nonceChaCha,
             nonceAes,
+            entropyShaped: !!entropyShaping,
           },
           [chunkWithTags.buffer]
         );
@@ -852,7 +844,30 @@ async function executePoolDecryption(params: {
   // 1. Detect Polyglot Carrier header if present (WAVE, ISO-9660, or MP4)
   const probeHeaderSlice = file.slice(0, Math.min(2097152, fileSize));
   const probeHeaderBytes = new Uint8Array(await probeHeaderSlice.arrayBuffer());
-  const carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
+  let carrierInfo = detectCarrierPayloadOffset(probeHeaderBytes);
+
+  // If MP4 carrier header (moov box) extends beyond initial 2 MB probe buffer (files > 1.7 GB)
+  if (carrierInfo.carrierType === 'mp4' && carrierInfo.pendingProbeOffset) {
+    const probePos = carrierInfo.pendingProbeOffset;
+    if (probePos + 16 <= fileSize) {
+      const mdatSlice = file.slice(probePos, probePos + 16);
+      const mdatBytes = new Uint8Array(await mdatSlice.arrayBuffer());
+      if (mdatBytes.length >= 8) {
+        const mView = new DataView(mdatBytes.buffer, mdatBytes.byteOffset, mdatBytes.byteLength);
+        const mSize = mView.getUint32(0, false);
+        const isMdat = mdatBytes[4] === 0x6d && mdatBytes[5] === 0x64 && mdatBytes[6] === 0x61 && mdatBytes[7] === 0x74;
+        if (isMdat) {
+          const headerLen = mSize === 1 ? 16 : 8;
+          carrierInfo = {
+            isCarrier: true,
+            payloadOffset: probePos + headerLen,
+            carrierType: 'mp4',
+          };
+        }
+      }
+    }
+  }
+
   const payloadStartOffset = carrierInfo.isCarrier ? carrierInfo.payloadOffset : 0;
   const effectiveContainerSize = fileSize - payloadStartOffset;
 
@@ -1017,18 +1032,7 @@ async function executePoolDecryption(params: {
     if (!slicePrefetchMap.has(chunkIdx)) {
       const start = payloadStartOffset + chunkIdx * effectiveChunkSize;
       const end = start + effectiveChunkSize;
-      if (metadata.entropyShaped) {
-        const p = file.slice(start, end).arrayBuffer().then((buf) => {
-          const slot = new Uint8Array(buf);
-          const unshaped = unshapeChunkFixed(slot, ENCRYPTED_CHUNK_SIZE);
-          const outBuf = new ArrayBuffer(unshaped.length);
-          new Uint8Array(outBuf).set(unshaped);
-          return outBuf;
-        });
-        slicePrefetchMap.set(chunkIdx, p);
-      } else {
-        slicePrefetchMap.set(chunkIdx, file.slice(start, end).arrayBuffer());
-      }
+      slicePrefetchMap.set(chunkIdx, file.slice(start, end).arrayBuffer());
     }
     return slicePrefetchMap.get(chunkIdx)!;
   };
@@ -1097,7 +1101,7 @@ async function executePoolDecryption(params: {
 
       const encBuffer = await getEncChunkSlice(idx);
       slicePrefetchMap.delete(idx);
-      if (encBuffer.byteLength < ENCRYPTED_CHUNK_SIZE) {
+      if (encBuffer.byteLength < effectiveChunkSize) {
         throw new Error(GENERIC_DECRYPT_ERROR);
       }
 
@@ -1112,6 +1116,7 @@ async function executePoolDecryption(params: {
             nonceSerpent,
             nonceChaCha: nonceChaCha20,
             nonceAes: nonceAes256,
+            entropyShaped: !!metadata.entropyShaped,
           },
           [encBuffer]
         );
