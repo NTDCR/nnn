@@ -176,33 +176,38 @@ export function shapeCiphertext(input: Uint8Array): Uint8Array {
  * Reconstitutes the exact original uniform ciphertext bit-for-bit from the shaped stream.
  */
 export function unshapeCiphertext(shaped: Uint8Array, originalLength: number): Uint8Array {
-  if (originalLength === 0) return new Uint8Array(0);
+  if (originalLength <= 0 || !Number.isSafeInteger(originalLength)) return new Uint8Array(0);
   const output = new Uint8Array(originalLength);
   let bitBuf = 0;
   let bitCount = 0;
   let outPos = 0;
 
-  for (let i = 0; i < shaped.length; i++) {
-    const s = shaped[i];
-    const len = LENGTH_TABLE[s];
-    const code = CODE_TABLE[s];
+  try {
+    for (let i = 0; i < shaped.length; i++) {
+      const s = shaped[i];
+      const len = LENGTH_TABLE[s];
+      const code = CODE_TABLE[s];
 
-    bitBuf = (bitBuf << len) | code;
-    bitCount += len;
+      bitBuf = (bitBuf << len) | code;
+      bitCount += len;
 
-    while (bitCount >= 8 && outPos < originalLength) {
-      bitCount -= 8;
-      output[outPos++] = (bitBuf >>> bitCount) & 0xFF;
-      bitBuf = bitBuf & ((1 << bitCount) - 1);
+      while (bitCount >= 8 && outPos < originalLength) {
+        bitCount -= 8;
+        output[outPos++] = (bitBuf >>> bitCount) & 0xFF;
+        bitBuf = bitBuf & ((1 << bitCount) - 1);
+      }
+      if (outPos >= originalLength) break;
     }
-    if (outPos >= originalLength) break;
-  }
 
-  if (outPos < originalLength) {
-    throw new Error(`Unshaping underflow: expected ${originalLength} bytes, got ${outPos}`);
-  }
+    if (outPos < originalLength) {
+      throw new Error(`Unshaping underflow: expected ${originalLength} bytes, got ${outPos}`);
+    }
 
-  return output;
+    return output;
+  } catch (err) {
+    output.fill(0);
+    throw err;
+  }
 }
 
 /**

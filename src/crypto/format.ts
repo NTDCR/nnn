@@ -1187,7 +1187,7 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): CarrierP
           };
         }
       }
-      if (boxSize <= 0) break;
+      if (boxSize <= 0 || (boxSize < 8 && boxSize !== 1)) break;
       if (boxSize === 1) {
         if (pos + 16 > fileStartBytes.length) break;
         const largeSize = Number(view.getBigUint64(pos + 8, false));

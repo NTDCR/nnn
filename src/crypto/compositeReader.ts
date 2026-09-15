@@ -32,8 +32,10 @@ export class CompositeFileReader implements SliceableDataSource {
       this.offsets.push(total);
     }
     this.size = total;
-    // Strip trailing .partXXX or .part-XXX if present
-    this.name = sorted[0].name.replace(/\.part[-_]?\d+$/i, '');
+    // Strip trailing .partXXX or .part-XXX or .00X while preserving any trailing extension (e.g. .enc, .bin)
+    this.name = sorted[0].name
+      .replace(/\.part[-_]?\d+(?=(\.[^.]+)?$)/i, '')
+      .replace(/\.\d{3,}(?=(\.[^.]+)?$)/i, '');
   }
 
   public static isMultiPart(files: File[]): boolean {
@@ -41,7 +43,9 @@ export class CompositeFileReader implements SliceableDataSource {
   }
 
   public static getPartNumber(name: string): number | null {
-    const match = name.match(/\.part[-_]?(\d+)$/i) || name.match(/\.(\d{3,})$/i);
+    const match =
+      name.match(/\.part[-_]?(\d+)(?:\.[a-zA-Z0-9_-]+)?$/i) ||
+      name.match(/\.(\d{3,})(?:\.[a-zA-Z0-9_-]+)?$/i);
     if (match && match[1]) {
       const num = parseInt(match[1], 10);
       return Number.isSafeInteger(num) ? num : null;

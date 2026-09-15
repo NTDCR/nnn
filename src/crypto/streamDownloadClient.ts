@@ -189,6 +189,11 @@ export async function createStreamDownloadSession(options: {
       options.signal?.removeEventListener('abort', onSignalAbort);
       clearTimeout(cleanupFallbackTimer);
       clearInterval(heartbeatTimer);
+      try {
+        channel.port1.postMessage({ type: 'CLOSE' });
+      } catch {
+        // Ignore port messaging errors during teardown
+      }
       // Allow 60 seconds for slow disk I/O and large stream buffers to finish writing before tearing down
       setTimeout(() => {
         try {

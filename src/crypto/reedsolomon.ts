@@ -512,16 +512,20 @@ export function healMetadataBlob(blob512: Uint8Array): { healed: boolean; correc
   codeword.set(blob512.subarray(0, METADATA_CRITICAL_LEN), 0);
   codeword.set(blob512.subarray(METADATA_ECC_OFFSET, METADATA_ECC_OFFSET + METADATA_ECC_PARITY_LEN), METADATA_CRITICAL_LEN);
 
-  const res = rsDecode(codeword, METADATA_ECC_PARITY_LEN);
-  if (!res.success) {
+  try {
+    const res = rsDecode(codeword, METADATA_ECC_PARITY_LEN);
+    if (!res.success) {
+      return { healed: false, correctedCount: 0 };
+    }
+
+    if (res.correctedCount > 0) {
+      // Write back healed critical header bytes
+      blob512.set(res.data, 0);
+      return { healed: true, correctedCount: res.correctedCount };
+    }
+
     return { healed: false, correctedCount: 0 };
+  } finally {
+    codeword.fill(0);
   }
-
-  if (res.correctedCount > 0) {
-    // Write back healed critical header bytes
-    blob512.set(res.data, 0);
-    return { healed: true, correctedCount: res.correctedCount };
-  }
-
-  return { healed: false, correctedCount: 0 };
 }

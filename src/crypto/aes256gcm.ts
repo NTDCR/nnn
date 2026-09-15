@@ -142,8 +142,11 @@ export class Aes256Gcm {
           );
           return new Uint8Array(plainBuffer);
         }
-      } catch {
-        // Fall through to Noble Ciphers fallback
+      } catch (err: unknown) {
+        if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'OperationError') {
+          throw new Error('Decryption failed. Check all keys.');
+        }
+        // Fall through to Noble Ciphers fallback for environment or browser-level issues
       }
     }
 
@@ -187,8 +190,11 @@ export class Aes256Gcm {
           );
           return new Uint8Array(plainBuffer);
         }
-      } catch {
-        // Fall through to Noble Ciphers fallback
+      } catch (err: unknown) {
+        if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'OperationError') {
+          throw new Error('Decryption failed. Check all keys.');
+        }
+        // Fall through to Noble Ciphers fallback for environment or browser-level issues
       }
     }
 

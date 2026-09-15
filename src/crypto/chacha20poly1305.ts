@@ -91,7 +91,12 @@ export class ChaCha20Poly1305 {
       throw new Error('Decryption failed. Check all keys.');
     }
     if (this.simdEngine) {
-      this.simdEngine.decryptInPlace(data, nonce12, tag16, aad);
+      try {
+        this.simdEngine.decryptInPlace(data, nonce12, tag16, aad);
+      } catch (err) {
+        data.fill(0);
+        throw err;
+      }
       return;
     }
     const cipher = chacha20poly1305(this.rawKey, nonce12, aad);
