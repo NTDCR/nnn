@@ -135,10 +135,19 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    // Page Unload Guard: Instantly scrub keys when closing window or navigating away
+    const handlePageUnload = () => {
+      scrubKeys();
+    };
+    window.addEventListener('pagehide', handlePageUnload);
+    window.addEventListener('beforeunload', handlePageUnload);
+
     return () => {
       clearTimeout(timeoutId);
       events.forEach((evt) => window.removeEventListener(evt, resetTimer));
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageUnload);
+      window.removeEventListener('beforeunload', handlePageUnload);
     };
   }, [keys, disabled, onChangeKeys]);
 

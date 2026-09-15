@@ -599,7 +599,7 @@ export function createIsoCarrierHeader(payloadLength: number, options?: IsoCarri
   header.set(volIdent, pvdOffset + 40);
 
   // Volume Space Size (80..87)
-  writeBothEndianU32(view, pvdOffset + 80, totalSectors);
+  writeBothEndianU32(view, pvdOffset + 80, Math.min(0xFFFFFFFF, totalSectors));
 
   // Volume Set Size & Sequence Number (120..127)
   writeBothEndianU16(view, pvdOffset + 120, 1);
@@ -695,7 +695,7 @@ export function createIsoCarrierHeader(payloadLength: number, options?: IsoCarri
   const recLen = 33 + nameBytes.length + 1; // 44 bytes
   view.setUint8(fileEntryOffset, recLen);
   writeBothEndianU32(view, fileEntryOffset + 2, 21); // Sector 21
-  writeBothEndianU32(view, fileEntryOffset + 10, payloadLength);
+  writeBothEndianU32(view, fileEntryOffset + 10, Math.min(0xFFFFFFFF, payloadLength));
   header[fileEntryOffset + 25] = 0; // File flag
   writeBothEndianU16(view, fileEntryOffset + 28, 1);
   header[fileEntryOffset + 32] = nameBytes.length;

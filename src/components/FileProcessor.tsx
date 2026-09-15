@@ -324,11 +324,18 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       }
     }
 
-    if (!writableStreamRef.current && !streamSession && inputSource.size > 250 * 1024 * 1024) {
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isDesktopOS = /Windows NT|Win64|x86_64|X11.*Linux|Macintosh|Mac OS X/i.test(ua);
+    const isExplicitMobile = /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua) ||
+      Boolean((navigator as unknown as { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile);
+    const isMobileDevice = !isDesktopOS && isExplicitMobile;
+    const maxRamFallback = isMobileDevice ? 75 * 1024 * 1024 : 250 * 1024 * 1024;
+
+    if (!writableStreamRef.current && !streamSession && inputSource.size > maxRamFallback) {
       setError(
-        'Direct disk streaming is unavailable in this private/restricted browsing context. ' +
-        'Processing files > 250 MB in memory would crash the browser tab. ' +
-        'Please use standard browsing mode or a browser supporting the File System Access API (Chrome/Edge).'
+        isMobileDevice
+          ? 'Direct disk streaming is unavailable in this mobile browsing context. Processing files > 75 MB in memory would crash the mobile browser tab. Please use a desktop browser supporting direct disk streaming or smaller files.'
+          : 'Direct disk streaming is unavailable in this private/restricted browsing context. Processing files > 250 MB in memory would crash the browser tab. Please use standard browsing mode or a browser supporting the File System Access API (Chrome/Edge).'
       );
       return;
     }
@@ -442,9 +449,12 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               await flushDiskBuffer();
             }
           } else if (streamSession) {
-            await streamSession.write(chunkBytes);
-            if (chunkBytes.buffer && chunkBytes.buffer.byteLength > 0) {
-              chunkBytes.fill(0);
+            try {
+              await streamSession.write(chunkBytes);
+            } finally {
+              if (chunkBytes.buffer && chunkBytes.buffer.byteLength > 0) {
+                chunkBytes.fill(0);
+              }
             }
           } else {
             memoryChunks.push(chunkBytes);
@@ -582,7 +592,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               className="bg-transparent text-indigo-300 font-mono text-[11px] outline-none cursor-pointer"
             >
               <option value="auto" className="bg-slate-900 text-slate-200">Auto (Strict P-Cores)</option>
-              <option value="webgpu" className="bg-slate-900 text-slate-200">WebGPU (Multi-Core)</option>
+              <option value="webgpu" className="bg-slate-900 text-slate-200">High-Throughput (16 Cores)</option>
               <option value="2" className="bg-slate-900 text-slate-200">2 Cores (Mobile)</option>
               <option value="4" className="bg-slate-900 text-slate-200">4 Cores (Quad)</option>
               <option value="6" className="bg-slate-900 text-slate-200">6 Cores (Hexa)</option>
