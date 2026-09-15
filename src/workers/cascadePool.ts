@@ -445,6 +445,8 @@ async function executePoolEncryption(params: {
 
   let hmacKey: Uint8Array | null = deriveHmacKey(k1, k2);
   const hmacClient = new HmacWorkerClient(hmacKey);
+  hmacKey.fill(0);
+  hmacKey = null;
 
   const nonceThreefish = new Uint8Array(16);
   const nonceSerpent = new Uint8Array(16);
@@ -750,7 +752,7 @@ async function executePoolEncryption(params: {
     currentLayer: 4,
     processedBytes: originalSize,
     totalBytes: originalSize,
-    speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
+    speedMBs: Number(smoothedSpeed.toFixed(1)),
     etaSeconds: 0,
     elapsedSeconds: Math.max(0, Math.round((performance.now() - startTime) / 1000)),
     entropyShaped: isEntropyShaped,
@@ -834,6 +836,8 @@ async function executePoolEncryption(params: {
   maskedMeta.fill(0);
   tailPointer.fill(0);
   salt16.fill(0);
+  hmacIntegrity.fill(0);
+  orderHash.fill(0);
 
   const totalTimeMs = performance.now() - startTime;
   const avgSpeed = (originalSize / (1024 * 1024)) / Math.max(0.01, totalTimeMs / 1000);
@@ -848,6 +852,10 @@ async function executePoolEncryption(params: {
     averageSpeedMBs: Number(avgSpeed.toFixed(1)),
   };
   } finally {
+    nonceThreefish.fill(0);
+    nonceSerpent.fill(0);
+    nonceChaCha.fill(0);
+    nonceAes.fill(0);
     hmacClient.destroy();
     if (hmacKey) {
       hmacKey.fill(0);
@@ -984,6 +992,8 @@ async function executePoolDecryption(params: {
 
   let hmacKey: Uint8Array | null = deriveHmacKey(k1, k2);
   const decryptionHasher = hmac.create(sha256, hmacKey);
+  hmacKey.fill(0);
+  hmacKey = null;
 
   const isEntropyShaped = Boolean(metadata.entropyShaped);
 
@@ -1247,7 +1257,7 @@ async function executePoolDecryption(params: {
     currentLayer: 1,
     processedBytes: originalSize,
     totalBytes: originalSize,
-    speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
+    speedMBs: Number(smoothedSpeed.toFixed(1)),
     etaSeconds: 0,
     elapsedSeconds: Math.max(0, Math.round((performance.now() - startTime) / 1000)),
     entropyShaped: isEntropyShaped,
@@ -1255,20 +1265,22 @@ async function executePoolDecryption(params: {
 
   // Adversarial check: Verify HMAC integrity of entire recovered plaintext
   const computedHmac = decryptionHasher.digest();
-  if (!constantTimeCompare(computedHmac, metadata.hmacIntegrity)) {
+  const isHmacValid = constantTimeCompare(computedHmac, metadata.hmacIntegrity);
+  computedHmac.fill(0);
+  if (!isHmacValid) {
     throw new Error(GENERIC_DECRYPT_ERROR);
   }
 
   // Emit guaranteed 100% final progress strictly after HMAC verification succeeds
   onProgress?.({
     type: 'PROGRESS',
-    phase: 'DECRYPTING',
+    phase: 'FINALIZING',
     currentChunk: chunkCount,
     totalChunks: chunkCount,
     currentLayer: 1,
     processedBytes: originalSize,
     totalBytes: originalSize,
-    speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
+    speedMBs: Number(smoothedSpeed.toFixed(1)),
     etaSeconds: 0,
     elapsedSeconds: Math.max(0, Math.round((performance.now() - startTime) / 1000)),
     entropyShaped: isEntropyShaped,
@@ -1293,6 +1305,14 @@ async function executePoolDecryption(params: {
     lastModified: metadata?.lastModified,
   };
   } finally {
+    if (metadata) {
+      metadata.nonceThreefish.fill(0);
+      metadata.nonceSerpent.fill(0);
+      metadata.nonceChaCha20.fill(0);
+      metadata.nonceAes256.fill(0);
+      metadata.hmacIntegrity.fill(0);
+      metadata.orderConfirm.fill(0);
+    }
     if (hmacKey) {
       hmacKey.fill(0);
       hmacKey = null;

@@ -75,7 +75,8 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
   const abortControllerRef = useRef<AbortController | null>(null);
   const writableStreamRef = useRef<FileSystemWritableFileStream | null>(null);
   const streamSessionRef = useRef<StreamDownloadSession | null>(null);
-  const currentPartChunksRef = useRef<Uint8Array[]>([]);
+  const activeMemoryChunksRef = useRef<Uint8Array[]>([]);
+  const activeDiskChunksRef = useRef<Uint8Array[]>([]);
   const activeBlobUrlsRef = useRef<Set<string>>(new Set());
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
 
@@ -139,18 +140,20 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         }
         streamSessionRef.current = null;
       }
-      for (const c of currentPartChunksRef.current) {
+      for (const c of activeMemoryChunksRef.current) {
         c.fill(0);
       }
-      currentPartChunksRef.current = [];
+      activeMemoryChunksRef.current = [];
+      for (const c of activeDiskChunksRef.current) {
+        c.fill(0);
+      }
+      activeDiskChunksRef.current = [];
       activeBlobUrlsRef.current.forEach((url) => {
-        setTimeout(() => {
-          try {
-            URL.revokeObjectURL(url);
-          } catch {
-            // Ignore
-          }
-        }, 60000);
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Ignore
+        }
       });
       activeBlobUrlsRef.current.clear();
     };
@@ -386,12 +389,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
 
     // Disk write batching to minimize Chromium IPC context switches by 75%
     let diskWriteBuffer: Uint8Array[] = [];
+    activeDiskChunksRef.current = diskWriteBuffer;
     let diskBufferedBytes = 0;
     const flushDiskBuffer = async () => {
       if (diskWriteBuffer.length === 0 || !writableStreamRef.current) return;
       if (diskWriteBuffer.length === 1) {
         const single = diskWriteBuffer[0];
         diskWriteBuffer = [];
+        activeDiskChunksRef.current = diskWriteBuffer;
         diskBufferedBytes = 0;
         try {
           await writableStreamRef.current.write(single);
@@ -408,6 +413,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         diskWriteBuffer[b].fill(0);
       }
       diskWriteBuffer = [];
+      activeDiskChunksRef.current = diskWriteBuffer;
       diskBufferedBytes = 0;
       try {
         await writableStreamRef.current.write(coalesced);
@@ -503,6 +509,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
             }
           } else {
             memoryChunks.push(chunkBytes);
+            activeMemoryChunksRef.current = memoryChunks;
           }
         },
         signal: abortController.signal,
@@ -524,6 +531,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
           c.fill(0);
         }
         memoryChunks = [];
+        activeMemoryChunksRef.current = [];
         const url = URL.createObjectURL(blob);
         activeBlobUrlsRef.current.add(url);
         setDownloadBlobUrl(url);
@@ -555,11 +563,13 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         c.fill(0);
       }
       diskWriteBuffer = [];
+      activeDiskChunksRef.current = [];
       diskBufferedBytes = 0;
       for (const c of memoryChunks) {
         c.fill(0);
       }
       memoryChunks = [];
+      activeMemoryChunksRef.current = [];
       setIsProcessing(false);
       setProgress(null);
 
@@ -593,10 +603,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       streamSessionRef.current.abort('Operation cancelled by user.').catch(() => {});
       streamSessionRef.current = null;
     }
-    for (const c of currentPartChunksRef.current) {
+    for (const c of activeMemoryChunksRef.current) {
       c.fill(0);
     }
-    currentPartChunksRef.current = [];
+    activeMemoryChunksRef.current = [];
+    for (const c of activeDiskChunksRef.current) {
+      c.fill(0);
+    }
+    activeDiskChunksRef.current = [];
     clearDownloadUrl();
     setIsProcessing(false);
     setProgress(null);

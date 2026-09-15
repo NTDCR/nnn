@@ -266,16 +266,20 @@ export function calculateShannonMetrics(data: Uint8Array): {
 export function fillCalibratedShapedBytes(buffer: Uint8Array): void {
   const len = buffer.length;
   if (len === 0) return;
-  const rand16 = new Uint16Array(len);
-  const CHUNK_SIZE_16 = 32768;
-  for (let offset = 0; offset < len; offset += CHUNK_SIZE_16) {
-    const chunk = rand16.subarray(offset, Math.min(offset + CHUNK_SIZE_16, len));
-    crypto.getRandomValues(chunk);
+  const SCRATCH_SIZE = 2048;
+  const scratch = new Uint16Array(SCRATCH_SIZE);
+  try {
+    for (let offset = 0; offset < len; offset += SCRATCH_SIZE) {
+      const count = Math.min(SCRATCH_SIZE, len - offset);
+      const sub = scratch.subarray(0, count);
+      crypto.getRandomValues(sub);
+      for (let i = 0; i < count; i++) {
+        buffer[offset + i] = LUT_SYMBOL[sub[i] & 2047];
+      }
+    }
+  } finally {
+    scratch.fill(0);
   }
-  for (let i = 0; i < len; i++) {
-    buffer[i] = LUT_SYMBOL[rand16[i] & 2047];
-  }
-  rand16.fill(0);
 }
 
 /**

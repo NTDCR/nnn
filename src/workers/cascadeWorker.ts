@@ -199,23 +199,27 @@ self.onmessage = async (e: MessageEvent) => {
         // Zero-copy in-place contiguous tag arrangement:
         // 1. Save 16-byte tagChaCha to stack array (only 16 bytes copied)
         const tagChaCha = new Uint8Array(16);
-        tagChaCha.set(chunkWithTags.subarray(CHUNK_SIZE, CHUNK_SIZE + 16));
+        try {
+          tagChaCha.set(chunkWithTags.subarray(CHUNK_SIZE, CHUNK_SIZE + 16));
 
-        // 2. Move 16-byte tagAes directly contiguous with ciphertext in-place (16 bytes copy)
-        chunkWithTags.copyWithin(CHUNK_SIZE, CHUNK_SIZE + 16, CHUNK_SIZE + 32);
+          // 2. Move 16-byte tagAes directly contiguous with ciphertext in-place (16 bytes copy)
+          chunkWithTags.copyWithin(CHUNK_SIZE, CHUNK_SIZE + 16, CHUNK_SIZE + 32);
 
-        // 3. Contiguous slice (1048576 + 16 bytes) with ZERO 1MB memory staging copy
-        const contiguousCipherAndTag = chunkWithTags.subarray(0, CHUNK_SIZE + 16);
+          // 3. Contiguous slice (1048576 + 16 bytes) with ZERO 1MB memory staging copy
+          const contiguousCipherAndTag = chunkWithTags.subarray(0, CHUNK_SIZE + 16);
 
-        plain = await pooledEngine.decryptChunkContiguous(
-          contiguousCipherAndTag,
-          chunkIndex,
-          new Uint8Array(nonceThreefish),
-          new Uint8Array(nonceSerpent),
-          new Uint8Array(nonceChaCha),
-          new Uint8Array(nonceAes),
-          tagChaCha
-        );
+          plain = await pooledEngine.decryptChunkContiguous(
+            contiguousCipherAndTag,
+            chunkIndex,
+            new Uint8Array(nonceThreefish),
+            new Uint8Array(nonceSerpent),
+            new Uint8Array(nonceChaCha),
+            new Uint8Array(nonceAes),
+            tagChaCha
+          );
+        } finally {
+          tagChaCha.fill(0);
+        }
       } else {
         const ciphertext = chunkWithTags.subarray(0, CHUNK_SIZE);
         const tagChaCha = chunkWithTags.subarray(CHUNK_SIZE, CHUNK_SIZE + 16);

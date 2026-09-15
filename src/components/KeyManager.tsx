@@ -255,7 +255,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   const handleCopyAll = async () => {
     const backupText = JSON.stringify(
       {
-        format: 'Fort-Knox-Cascade-v1',
+        format: 'Cascade-Container-v1',
         createdAt: new Date().toISOString(),
         warning: 'Keep this backup strictly offline. Anyone with these keys can decrypt your files.',
         keys: {
@@ -289,7 +289,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
   const handleExportJson = () => {
     const data = {
-      format: 'Fort-Knox-Cascade-v1',
+      format: 'Cascade-Container-v1',
       exportedAt: new Date().toISOString(),
       keys,
     };
@@ -297,7 +297,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `fortknox_keys_${Date.now()}.json`;
+    a.download = `cascade_keys_${Date.now()}.json`;
     a.rel = 'noopener';
     a.style.position = 'fixed';
     a.style.left = '-9999px';
