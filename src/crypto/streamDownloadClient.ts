@@ -123,12 +123,12 @@ export async function createStreamDownloadSession(options: {
     iframe.src = downloadUrl;
     document.body.appendChild(iframe);
 
-    // Clean up iframe after 90 seconds
-    setTimeout(() => {
+    // Safety fallback cleanup after 4 hours for abandoned sessions
+    const cleanupFallbackTimer = setTimeout(() => {
       if (document.body.contains(iframe)) {
         document.body.removeChild(iframe);
       }
-    }, 90000);
+    }, 14400000);
 
     // Heartbeat ping interval to keep Service Worker active during long downloads on Firefox/Safari
     const heartbeatTimer = setInterval(() => {
@@ -174,6 +174,7 @@ export async function createStreamDownloadSession(options: {
     };
 
     const close = async (): Promise<void> => {
+      clearTimeout(cleanupFallbackTimer);
       clearInterval(heartbeatTimer);
       channel.port1.postMessage({ type: 'CLOSE' });
       setTimeout(() => {
@@ -182,10 +183,14 @@ export async function createStreamDownloadSession(options: {
         } catch {
           // Ignore
         }
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
       }, 5000);
     };
 
     const abort = async (reason?: string): Promise<void> => {
+      clearTimeout(cleanupFallbackTimer);
       clearInterval(heartbeatTimer);
       channel.port1.postMessage({ type: 'ABORT', error: reason });
       try {

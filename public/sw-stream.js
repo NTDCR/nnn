@@ -109,9 +109,6 @@ self.addEventListener('fetch', (event) => {
       return;
     }
 
-    // Single use
-    streamRegistry.delete(streamId);
-
     const safeFilename = entry.filename.replace(/["\r\n]/g, '_');
     const encodedFilename = encodeURIComponent(safeFilename);
 
@@ -126,6 +123,15 @@ self.addEventListener('fetch', (event) => {
     if (entry.totalSize && entry.totalSize > 0) {
       headers.set('Content-Length', String(entry.totalSize));
     }
+
+    // Support download accelerators, IDM, and antivirus probes: respond to HEAD without consuming the stream
+    if (event.request.method === 'HEAD') {
+      event.respondWith(new Response(null, { headers, status: 200 }));
+      return;
+    }
+
+    // Single use on actual GET body transfer
+    streamRegistry.delete(streamId);
 
     event.respondWith(new Response(entry.stream, { headers }));
   }

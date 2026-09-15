@@ -161,6 +161,20 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     };
   }, [isProcessing]);
 
+  // Auto-reacquire Screen WakeLock when tab becomes visible again during active processing
+  useEffect(() => {
+    if (!isProcessing) return;
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && !wakeLockRef.current) {
+        acquireWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isProcessing]);
+
   useEffect(() => {
     onProcessingChange?.(isProcessing);
   }, [isProcessing, onProcessingChange]);

@@ -79,6 +79,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [copyAllStatus, setCopyAllStatus] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [scrubbedNotice, setScrubbedNotice] = useState<string | null>(null);
 
   const keyList: { key: keyof CascadeKeys; label: string; index: number }[] = [
     { key: 'layer1ThreefishHex', label: 'Layer 1: Threefish-1024 Key', index: 0 },
@@ -92,13 +93,20 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     const hasKeys = !!(keys.layer1ThreefishHex || keys.layer2SerpentHex || keys.layer3ChaChaHex || keys.layer4AesHex);
     if (!hasKeys || disabled) return;
 
-    const scrubKeys = () => {
+    const scrubKeys = (reason: 'inactivity' | 'background' | 'unload') => {
       onChangeKeys({
         layer1ThreefishHex: '',
         layer2SerpentHex: '',
         layer3ChaChaHex: '',
         layer4AesHex: '',
       });
+      if (reason !== 'unload') {
+        setScrubbedNotice(
+          reason === 'background'
+            ? 'Keys were securely scrubbed from memory after 60s background inactivity.'
+            : 'Keys were securely scrubbed from memory after 5 minutes idle time.'
+        );
+      }
       // Anti-Forensics: allocate & zero ephemeral buffers to prompt V8 heap scavenger compaction
       try {
         for (let i = 0; i < 8; i++) {
@@ -114,7 +122,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
     const resetTimer = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        scrubKeys();
+        scrubKeys('inactivity');
       }, 5 * 60 * 1000); // 5 minutes
     };
 
@@ -127,7 +135,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
       if (document.visibilityState === 'hidden') {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
-          scrubKeys();
+          scrubKeys('background');
         }, 60 * 1000); // 1 minute in background
       } else {
         resetTimer();
@@ -137,7 +145,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
     // Page Unload Guard: Instantly scrub keys when closing window or navigating away
     const handlePageUnload = () => {
-      scrubKeys();
+      scrubKeys('unload');
     };
     window.addEventListener('pagehide', handlePageUnload);
     window.addEventListener('beforeunload', handlePageUnload);
@@ -153,6 +161,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
   const handlePanicScrub = () => {
     setImportError(null);
+    setScrubbedNotice('Emergency Panic Scrub: All ephemeral keys zeroized and memory wiped.');
     onChangeKeys({
       layer1ThreefishHex: '',
       layer2SerpentHex: '',
@@ -171,6 +180,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
   const handleGenerateKey = (keyName: keyof CascadeKeys) => {
     setImportError(null);
+    setScrubbedNotice(null);
     const newHex = keyName === 'layer1ThreefishHex' ? generateRandomKey(128) : generateRandomKey(32);
     onChangeKeys({
       ...keys,
@@ -180,6 +190,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
   const handleGenerateAll = () => {
     setImportError(null);
+    setScrubbedNotice(null);
     onChangeKeys({
       layer1ThreefishHex: generateRandomKey(128),
       layer2SerpentHex: generateRandomKey(32),
@@ -375,6 +386,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
 
         if (k1 || k2 || k3 || k4) {
           setImportError(null);
+          setScrubbedNotice(null);
           onChangeKeys({
             layer1ThreefishHex: k1 || keys.layer1ThreefishHex,
             layer2SerpentHex: k2 || keys.layer2SerpentHex,
@@ -475,6 +487,24 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
         </div>
       </div>
 
+      {/* Memory Scrubbed Security Banner */}
+      {scrubbedNotice && (
+        <div id="key-scrubbed-notice" className="mt-4 flex items-center justify-between gap-2 p-3 rounded-xl bg-purple-950/60 border border-purple-800/80 text-purple-200 text-xs font-mono">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-purple-400 shrink-0" />
+            <span>{scrubbedNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setScrubbedNotice(null)}
+            className="text-purple-400 hover:text-purple-200 p-1 rounded transition cursor-pointer"
+            title="Dismiss notice"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Import Error Banner */}
       {importError && (
         <div id="key-import-error" className="mt-4 flex items-center justify-between gap-2 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs font-mono">
@@ -562,6 +592,7 @@ export const KeyManager: React.FC<KeyManagerProps> = ({ keys, onChangeKeys, disa
                   value={val}
                   onChange={(e) => {
                     if (importError) setImportError(null);
+                    if (scrubbedNotice) setScrubbedNotice(null);
                     onChangeKeys({
                       ...keys,
                       [item.key]: e.target.value.trim().replace(/^0x/i, '').replace(/[\s\-_:"']/g, ''),
