@@ -34,6 +34,7 @@ import {
   shapeChunkFixed,
   unshapeChunkFixed,
   shapeInto,
+  fillCalibratedShapedBytes,
 } from './distributionMatcher.ts';
 
 export {
@@ -55,6 +56,7 @@ export {
   shapeChunkFixed,
   unshapeChunkFixed,
   shapeInto,
+  fillCalibratedShapedBytes,
   sha256,
   hmac,
 };

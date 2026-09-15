@@ -260,6 +260,25 @@ export function calculateShannonMetrics(data: Uint8Array): {
 }
 
 /**
+ * Generates non-repeating cryptographically pseudo-random bytes calibrated exactly to ~6.90 b/B Shannon entropy.
+ * Samples directly from the complete prefix tree LUT in O(N) constant time to evade manual steganalysis.
+ */
+export function fillCalibratedShapedBytes(buffer: Uint8Array): void {
+  const len = buffer.length;
+  if (len === 0) return;
+  const rand16 = new Uint16Array(len);
+  const CHUNK_SIZE_16 = 32768;
+  for (let offset = 0; offset < len; offset += CHUNK_SIZE_16) {
+    const chunk = rand16.subarray(offset, Math.min(offset + CHUNK_SIZE_16, len));
+    crypto.getRandomValues(chunk);
+  }
+  for (let i = 0; i < len; i++) {
+    buffer[i] = LUT_SYMBOL[rand16[i] & 2047];
+  }
+  rand16.fill(0);
+}
+
+/**
  * Exact fixed-slot size for 1 MB ciphertext chunk (1,048,608 bytes) shaped to ~6.90 b/B.
  * 1,216,512 bytes is 16-byte aligned and provides deterministic O(1) random-access seeking.
  */
@@ -273,12 +292,9 @@ export function shapeChunkFixed(encChunk: Uint8Array): Uint8Array {
   }
   if (shapedLen === 0) return fixed;
 
-  // Pad remainder by cycling shaped bytes directly inside fixed to maintain calibrated ~6.90 b/B distribution
-  let padOff = shapedLen;
-  let copyPos = 0;
-  while (padOff < FIXED_SHAPED_CHUNK_SIZE) {
-    fixed[padOff++] = fixed[copyPos++];
-    if (copyPos >= shapedLen) copyPos = 0;
+  if (shapedLen < FIXED_SHAPED_CHUNK_SIZE) {
+    // Fill remainder with non-repeating calibrated ~6.90 b/B bytes to eliminate autocorrelation anomalies
+    fillCalibratedShapedBytes(fixed.subarray(shapedLen));
   }
   return fixed;
 }

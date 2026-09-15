@@ -24,6 +24,7 @@ import {
   createMp4CarrierHeader,
   detectCarrierPayloadOffset,
   FIXED_SHAPED_CHUNK_SIZE,
+  fillCalibratedShapedBytes,
 } from '../crypto/format.ts';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -782,7 +783,11 @@ async function executePoolEncryption(params: {
 
   // Stream pre-metadata jitter noise (destroys chunk-to-metadata boundary)
   const preMetaBuf = new Uint8Array(preMetaJitterLen);
-  fillRandomBytes(preMetaBuf);
+  if (isEntropyShaped) {
+    fillCalibratedShapedBytes(preMetaBuf);
+  } else {
+    fillRandomBytes(preMetaBuf);
+  }
   await onChunkOutput(preMetaBuf);
   preMetaBuf.fill(0);
 
@@ -792,7 +797,11 @@ async function executePoolEncryption(params: {
   const salt16 = new Uint8Array(16);
   if (prefixJitterLen > 0) {
     const padBuf = new Uint8Array(prefixJitterLen);
-    fillRandomBytes(padBuf);
+    if (isEntropyShaped) {
+      fillCalibratedShapedBytes(padBuf);
+    } else {
+      fillRandomBytes(padBuf);
+    }
     if (prefixJitterLen >= 16) {
       salt16.set(padBuf.subarray(prefixJitterLen - 16));
     } else {
@@ -812,7 +821,11 @@ async function executePoolEncryption(params: {
 
   if (suffixJitterLen > 0) {
     const suffixBuf = new Uint8Array(suffixJitterLen);
-    fillRandomBytes(suffixBuf);
+    if (isEntropyShaped) {
+      fillCalibratedShapedBytes(suffixBuf);
+    } else {
+      fillRandomBytes(suffixBuf);
+    }
     await onChunkOutput(suffixBuf);
     suffixBuf.fill(0);
   }
