@@ -302,7 +302,11 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
 
     // Output target naming
     const baseRawName = inputSource.name.replace(/^.*[\\/]/, '').replace(/[/\\?%*:|"<>]/g, '_');
-    const safeRawName = baseRawName.replace(/\.part[-_]?\d+$/i, '').trim().replace(/[. ]+$/, '') || 'file';
+    const safeRawName = baseRawName
+      .replace(/\.part[-_]?\d+(?=(\.[^.]+)?$)/i, '')
+      .replace(/\.\d{3,}(?=(\.[^.]+)?$)/i, '')
+      .trim()
+      .replace(/[. ]+$/, '') || 'file';
     let targetFileName: string;
     if (action === 'ENCRYPT') {
       targetFileName = stealthExtension ? `${safeRawName}${stealthExtension}` : `${safeRawName}.bin`;

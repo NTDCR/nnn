@@ -714,8 +714,8 @@ async function executePoolEncryption(params: {
 
       processedBytes += rawLen;
       const speedMBs = calculateLiveSpeed(rawLen);
-      const remainingChunks = chunkCount - completedChunksCount;
-      const etaSeconds = speedMBs > 0 ? (remainingChunks * (CHUNK_SIZE / (1024 * 1024))) / speedMBs : 0;
+      const remainingBytes = Math.max(0, originalSize - processedBytes);
+      const etaSeconds = speedMBs > 0 ? (remainingBytes / (1024 * 1024)) / speedMBs : 0;
 
       onProgress?.({
         type: 'PROGRESS',
@@ -1198,8 +1198,8 @@ async function executePoolDecryption(params: {
 
       processedBytes += validLen;
       const speedMBs = calculateLiveSpeed(validLen);
-      const remainingChunks = chunkCount - completedChunksCount;
-      const etaSeconds = speedMBs > 0 ? (remainingChunks * (CHUNK_SIZE / (1024 * 1024))) / speedMBs : 0;
+      const remainingBytes = Math.max(0, originalSize - processedBytes);
+      const etaSeconds = speedMBs > 0 ? (remainingBytes / (1024 * 1024)) / speedMBs : 0;
 
       onProgress?.({
         type: 'PROGRESS',

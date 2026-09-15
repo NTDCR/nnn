@@ -80,7 +80,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) 
         <div className="flex items-center gap-1.5">
           <HardDrive className="w-3.5 h-3.5 text-slate-500" />
           <span>
-            {(progress.processedBytes / (1024 * 1024)).toFixed(1)} MB / {(progress.totalBytes / (1024 * 1024)).toFixed(1)} MB
+            {(Math.min(progress.processedBytes, progress.totalBytes) / (1024 * 1024)).toFixed(1)} MB / {(progress.totalBytes / (1024 * 1024)).toFixed(1)} MB
           </span>
           <span className="text-slate-500">({percent}%)</span>
         </div>

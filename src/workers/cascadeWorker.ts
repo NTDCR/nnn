@@ -130,10 +130,11 @@ self.onmessage = async (e: MessageEvent) => {
   }
 
   if (action === 'ENCRYPT_CHUNK') {
+    let chunkWithTags: Uint8Array | null = null;
     try {
       if (!pooledEngine) throw new Error('Engine not initialized');
       const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes, entropyShaped } = data;
-      const chunkWithTags = new Uint8Array(chunkData);
+      chunkWithTags = new Uint8Array(chunkData);
       if (chunkWithTags.length < ENCRYPTED_CHUNK_SIZE) {
         throw new Error('Invalid chunk buffer size');
       }
@@ -170,16 +171,19 @@ self.onmessage = async (e: MessageEvent) => {
         [finalBuffer]
       );
     } catch (err: unknown) {
+      if (chunkWithTags && chunkWithTags.byteLength > 0 && !chunkWithTags.buffer.detached) {
+        chunkWithTags.fill(0);
+      }
       self.postMessage({ type: 'ERROR', error: err instanceof Error ? err.message : 'Chunk encryption failed' });
     }
     return;
   }
 
   if (action === 'DECRYPT_CHUNK') {
+    let chunkWithTags: Uint8Array | null = null;
     try {
       if (!pooledEngine) throw new Error('Engine not initialized');
       const { chunkIndex, chunkData, nonceThreefish, nonceSerpent, nonceChaCha, nonceAes, entropyShaped } = data;
-      let chunkWithTags: Uint8Array;
       if (entropyShaped) {
         const shapedSlot = new Uint8Array(chunkData);
         chunkWithTags = unshapeChunkFixed(shapedSlot, ENCRYPTED_CHUNK_SIZE);
@@ -243,6 +247,9 @@ self.onmessage = async (e: MessageEvent) => {
         [outBuffer]
       );
     } catch {
+      if (chunkWithTags && chunkWithTags.byteLength > 0 && !chunkWithTags.buffer.detached) {
+        chunkWithTags.fill(0);
+      }
       self.postMessage({ type: 'ERROR', error: GENERIC_DECRYPT_ERROR });
     }
     return;

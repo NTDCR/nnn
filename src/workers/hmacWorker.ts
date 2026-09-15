@@ -95,6 +95,10 @@ self.onmessage = (e: MessageEvent) => {
       return;
     }
   } catch (err: unknown) {
+    for (const b of pendingChunks.values()) {
+      b.fill(0);
+    }
+    pendingChunks.clear();
     self.postMessage({
       type: 'ERROR',
       error: err instanceof Error ? err.message : 'HMAC worker error',
