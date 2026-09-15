@@ -14,6 +14,20 @@ const LAYER_NAMES = [
   'AES-256-GCM (Outermost)',
 ];
 
+export const formatEta = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0s';
+  const sec = Math.round(seconds);
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) {
+    const mins = Math.floor(sec / 60);
+    const remSec = sec % 60;
+    return `${mins}m ${remSec < 10 ? '0' : ''}${remSec}s`;
+  }
+  const hours = Math.floor(sec / 3600);
+  const remMins = Math.floor((sec % 3600) / 60);
+  return `${hours}h ${remMins < 10 ? '0' : ''}${remMins}m`;
+};
+
 export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) => {
   const percent = progress.totalBytes > 0
     ? Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))
@@ -39,7 +53,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) 
           </span>
           <span className="flex items-center gap-1">
             <Clock className="w-3.5 h-3.5 text-sky-400" />
-            ETA: {progress.etaSeconds}s
+            ETA: {formatEta(progress.etaSeconds)}
           </span>
           {onCancel && (
             <button

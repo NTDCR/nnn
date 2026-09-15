@@ -74,6 +74,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const writableStreamRef = useRef<FileSystemWritableFileStream | null>(null);
+  const streamSessionRef = useRef<StreamDownloadSession | null>(null);
   const currentPartChunksRef = useRef<Uint8Array[]>([]);
   const activeBlobUrlsRef = useRef<Set<string>>(new Set());
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
@@ -129,6 +130,14 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
           // Ignore abort errors on unmount
         }
         writableStreamRef.current = null;
+      }
+      if (streamSessionRef.current) {
+        try {
+          streamSessionRef.current.abort('Component unmounted').catch(() => {});
+        } catch {
+          // Ignore abort errors on unmount
+        }
+        streamSessionRef.current = null;
       }
       for (const c of currentPartChunksRef.current) {
         c.fill(0);
@@ -334,6 +343,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
       });
 
       if (streamSession) {
+        streamSessionRef.current = streamSession;
         setStreamedToDownloads(true);
       }
     }
@@ -488,6 +498,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         }
         writableStreamRef.current = null;
       } else if (streamSession) {
+        streamSessionRef.current = null;
         await streamSession.close();
         streamSession = null;
       } else if (memoryChunks.length > 0) {
@@ -520,6 +531,7 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
         } catch {
           // Ignore
         }
+        streamSessionRef.current = null;
         streamSession = null;
       }
       for (const c of diskWriteBuffer) {
@@ -559,6 +571,10 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
     if (writableStreamRef.current) {
       writableStreamRef.current.abort().catch(() => {});
       writableStreamRef.current = null;
+    }
+    if (streamSessionRef.current) {
+      streamSessionRef.current.abort('Operation cancelled by user.').catch(() => {});
+      streamSessionRef.current = null;
     }
     for (const c of currentPartChunksRef.current) {
       c.fill(0);

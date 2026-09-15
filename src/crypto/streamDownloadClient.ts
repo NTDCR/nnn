@@ -141,6 +141,18 @@ export async function createStreamDownloadSession(options: {
       }
     }, 10000);
 
+    const onSignalAbort = () => {
+      abort(options.signal?.reason ? String(options.signal.reason) : 'Aborted');
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onSignalAbort();
+      } else {
+        options.signal.addEventListener('abort', onSignalAbort, { once: true });
+      }
+    }
+
     const write = async (chunk: Uint8Array): Promise<void> => {
       if (isCancelled || options.signal?.aborted) {
         throw new Error(cancelReason || 'Aborted');
@@ -174,6 +186,7 @@ export async function createStreamDownloadSession(options: {
     };
 
     const close = async (): Promise<void> => {
+      options.signal?.removeEventListener('abort', onSignalAbort);
       clearTimeout(cleanupFallbackTimer);
       clearInterval(heartbeatTimer);
       channel.port1.postMessage({ type: 'CLOSE' });
@@ -190,6 +203,14 @@ export async function createStreamDownloadSession(options: {
     };
 
     const abort = async (reason?: string): Promise<void> => {
+      options.signal?.removeEventListener('abort', onSignalAbort);
+      isCancelled = true;
+      cancelReason = reason || 'Aborted';
+      if (pullWaiter) {
+        const waiter = pullWaiter;
+        pullWaiter = null;
+        waiter();
+      }
       clearTimeout(cleanupFallbackTimer);
       clearInterval(heartbeatTimer);
       channel.port1.postMessage({ type: 'ABORT', error: reason });
