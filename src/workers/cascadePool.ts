@@ -500,6 +500,7 @@ async function executePoolEncryption(params: {
     totalBytes: originalSize,
     speedMBs: 0,
     etaSeconds: 0,
+    elapsedSeconds: 0,
     entropyShaped: isEntropyShaped,
   });
 
@@ -717,6 +718,7 @@ async function executePoolEncryption(params: {
       const speedMBs = calculateLiveSpeed(rawLen);
       const remainingBytes = Math.max(0, originalSize - processedBytes);
       const etaSeconds = speedMBs > 0 ? (remainingBytes / (1024 * 1024)) / speedMBs : 0;
+      const elapsedSeconds = Math.max(0, (performance.now() - startTime) / 1000);
 
       onProgress?.({
         type: 'PROGRESS',
@@ -728,6 +730,7 @@ async function executePoolEncryption(params: {
         totalBytes: originalSize,
         speedMBs: Number(speedMBs.toFixed(1)),
         etaSeconds: Math.max(0, Math.round(etaSeconds)),
+        elapsedSeconds: Math.max(0, Math.floor(elapsedSeconds)),
         entropyShaped: isEntropyShaped,
       });
     }
@@ -749,6 +752,7 @@ async function executePoolEncryption(params: {
     totalBytes: originalSize,
     speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
     etaSeconds: 0,
+    elapsedSeconds: Math.max(0, Math.round((performance.now() - startTime) / 1000)),
     entropyShaped: isEntropyShaped,
   });
 
@@ -997,6 +1001,7 @@ async function executePoolDecryption(params: {
     totalBytes: originalSize,
     speedMBs: 0,
     etaSeconds: 0,
+    elapsedSeconds: 0,
     entropyShaped: isEntropyShaped,
   });
 
@@ -1213,6 +1218,7 @@ async function executePoolDecryption(params: {
       const speedMBs = calculateLiveSpeed(validLen);
       const remainingBytes = Math.max(0, originalSize - processedBytes);
       const etaSeconds = speedMBs > 0 ? (remainingBytes / (1024 * 1024)) / speedMBs : 0;
+      const elapsedSeconds = Math.max(0, (performance.now() - startTime) / 1000);
 
       onProgress?.({
         type: 'PROGRESS',
@@ -1224,6 +1230,7 @@ async function executePoolDecryption(params: {
         totalBytes: originalSize,
         speedMBs: Number(speedMBs.toFixed(1)),
         etaSeconds: Math.max(0, Math.round(etaSeconds)),
+        elapsedSeconds: Math.max(0, Math.floor(elapsedSeconds)),
         entropyShaped: isEntropyShaped,
       });
     }
@@ -1251,6 +1258,7 @@ async function executePoolDecryption(params: {
     totalBytes: originalSize,
     speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
     etaSeconds: 0,
+    elapsedSeconds: Math.max(0, Math.round((performance.now() - startTime) / 1000)),
     entropyShaped: isEntropyShaped,
   });
 

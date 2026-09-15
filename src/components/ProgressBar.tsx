@@ -1,6 +1,6 @@
 import React from 'react';
 import { WorkerProgressMessage } from '../types/crypto.ts';
-import { Gauge, Clock, HardDrive, Layers } from 'lucide-react';
+import { Gauge, Clock, HardDrive, Layers, Timer } from 'lucide-react';
 
 interface ProgressBarProps {
   progress: WorkerProgressMessage;
@@ -28,6 +28,8 @@ export const formatEta = (seconds: number): string => {
   return `${hours}h ${remMins < 10 ? '0' : ''}${remMins}m`;
 };
 
+export const formatDuration = (seconds: number): string => formatEta(seconds);
+
 export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) => {
   const percent = progress.totalBytes > 0
     ? Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))
@@ -46,12 +48,16 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress, onCancel }) 
           </span>
         </div>
 
-        <div className="flex items-center justify-between sm:justify-end gap-3 text-xs font-mono text-slate-400">
+        <div className="flex items-center justify-between sm:justify-end gap-2.5 sm:gap-3 text-xs font-mono text-slate-400 flex-wrap">
           <span className="flex items-center gap-1">
             <Gauge className="w-3.5 h-3.5 text-emerald-400" />
             <strong className="text-emerald-400 font-semibold">{progress.speedMBs}</strong> MB/s
           </span>
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1" title="Elapsed processing duration">
+            <Timer className="w-3.5 h-3.5 text-amber-400" />
+            Elapsed: {formatEta(progress.elapsedSeconds ?? 0)}
+          </span>
+          <span className="flex items-center gap-1" title="Estimated time to completion">
             <Clock className="w-3.5 h-3.5 text-sky-400" />
             ETA: {formatEta(progress.etaSeconds)}
           </span>
