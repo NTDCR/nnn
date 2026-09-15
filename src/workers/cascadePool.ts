@@ -744,7 +744,7 @@ async function executePoolEncryption(params: {
   // Emit guaranteed 100% final progress so UI smoothly transitions to success
   onProgress?.({
     type: 'PROGRESS',
-    phase: 'ENCRYPTING',
+    phase: 'FINALIZING',
     currentChunk: chunkCount,
     totalChunks: chunkCount,
     currentLayer: 4,
@@ -793,7 +793,6 @@ async function executePoolEncryption(params: {
     fillRandomBytes(preMetaBuf);
   }
   await onChunkOutput(preMetaBuf);
-  preMetaBuf.fill(0);
 
   const metaCopy = new Uint8Array(maskedMeta);
   await onChunkOutput(metaCopy);
@@ -814,7 +813,6 @@ async function executePoolEncryption(params: {
       salt16.set(padBuf, metaNeed);
     }
     await onChunkOutput(padBuf);
-    padBuf.fill(0);
   } else {
     salt16.set(maskedMeta.subarray(maskedMeta.length - 16));
   }
@@ -831,7 +829,6 @@ async function executePoolEncryption(params: {
       fillRandomBytes(suffixBuf);
     }
     await onChunkOutput(suffixBuf);
-    suffixBuf.fill(0);
   }
 
   maskedMeta.fill(0);
@@ -1240,6 +1237,21 @@ async function executePoolDecryption(params: {
   drainReadyChunks();
   await writerPromise;
   if (writerError) throw writerError;
+
+  // Emit finalizing progress while verifying whole-file HMAC integrity
+  onProgress?.({
+    type: 'PROGRESS',
+    phase: 'FINALIZING',
+    currentChunk: chunkCount,
+    totalChunks: chunkCount,
+    currentLayer: 1,
+    processedBytes: originalSize,
+    totalBytes: originalSize,
+    speedMBs: Number(calculateLiveSpeed(0).toFixed(1)),
+    etaSeconds: 0,
+    elapsedSeconds: Math.max(0, Math.round((performance.now() - startTime) / 1000)),
+    entropyShaped: isEntropyShaped,
+  });
 
   // Adversarial check: Verify HMAC integrity of entire recovered plaintext
   const computedHmac = decryptionHasher.digest();
