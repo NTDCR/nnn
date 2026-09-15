@@ -7,6 +7,7 @@ import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { SpecModal } from './components/SpecModal.tsx';
 import { generateRandomKey } from './crypto/cascade.ts';
 import { CascadeKeys } from './types/crypto.ts';
+import { executePanicWipe } from './crypto/format.ts';
 import {
   Shield,
   Layers,
@@ -17,6 +18,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Flame,
 } from 'lucide-react';
 
 export default function App() {
@@ -53,6 +55,16 @@ export default function App() {
     }
   }, [isCloaked]);
 
+  const handlePanicWipe = async () => {
+    setKeys({
+      layer1ThreefishHex: '',
+      layer2SerpentHex: '',
+      layer3ChaChaHex: '',
+      layer4AesHex: '',
+    });
+    await executePanicWipe();
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       {/* Top Navigation Bar */}
@@ -88,6 +100,17 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              id="top-panic-wipe-btn"
+              onClick={handlePanicWipe}
+              title="Emergency Panic Wipe: Instantly purge all keys, clear caches & storage, and hard refresh"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border border-rose-800/80 bg-rose-950/70 hover:bg-rose-900/90 text-rose-300 hover:text-white text-xs font-semibold shadow-sm transition active:scale-95 cursor-pointer"
+            >
+              <Flame className="w-3.5 h-3.5 text-rose-400 animate-pulse" />
+              <span className="hidden sm:inline">Panic Wipe</span>
+              <span className="sm:hidden text-[11px]">Panic</span>
+            </button>
+
             <button
               id="toggle-stealth-cloak-btn"
               onClick={() => setIsCloaked((c) => !c)}
@@ -227,13 +250,25 @@ export default function App() {
       {/* Footer */}
       <footer className="mt-auto border-t border-slate-800/80 bg-slate-950 py-6 text-xs text-slate-500">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Shield className={`w-4 h-4 ${isCloaked ? 'text-emerald-500' : 'text-indigo-500'}`} />
-            <span>
-              {isCloaked
-                ? 'Storage Diagnostic & Stream Verification Platform'
-                : 'Fort-Knox Cryptographic Educational & Security Research Platform'}
-            </span>
+          <div className="flex items-center gap-3 flex-wrap justify-center sm:justify-start">
+            <div className="flex items-center gap-2">
+              <Shield className={`w-4 h-4 ${isCloaked ? 'text-emerald-500' : 'text-indigo-500'}`} />
+              <span>
+                {isCloaked
+                  ? 'Storage Diagnostic & Stream Verification Platform'
+                  : 'Fort-Knox Cryptographic Educational & Security Research Platform'}
+              </span>
+            </div>
+
+            <button
+              id="bottom-panic-wipe-btn"
+              onClick={handlePanicWipe}
+              title="Emergency Panic Wipe: Instantly purge all keys, clear caches & storage, and hard refresh"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-800/80 bg-rose-950/70 hover:bg-rose-900/90 text-rose-300 hover:text-white text-xs font-semibold shadow-sm transition active:scale-95 cursor-pointer"
+            >
+              <Flame className="w-3.5 h-3.5 text-rose-400" />
+              <span>Emergency Panic Wipe &amp; Hard Reload</span>
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-[11px] font-mono">

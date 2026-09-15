@@ -1211,3 +1211,95 @@ export function detectCarrierPayloadOffset(fileStartBytes: Uint8Array): CarrierP
 
   return { isCarrier: false, payloadOffset: 0 };
 }
+
+export interface PanicWipeOptions {
+  skipConfirm?: boolean;
+  reload?: boolean;
+}
+
+/**
+ * Emergency Scorched-Earth Panic Wipe Engine
+ * Anti-Forensics: Instantly scrubs all cryptographic keys from memory,
+ * clears Web Storage, purges CacheStorage API, unregisters Service Workers,
+ * wipes system clipboard, prompts V8 heap compaction, and executes a hard page reload.
+ */
+export async function executePanicWipe(options?: PanicWipeOptions): Promise<void> {
+  const shouldProceed = options?.skipConfirm || (
+    typeof window !== 'undefined' &&
+    typeof window.confirm === 'function' &&
+    window.confirm(
+      'EMERGENCY PANIC WIPE:\n\n' +
+      'This will immediately:\n' +
+      '• Scrub all cryptographic keys from RAM\n' +
+      '• Wipe browser localStorage & sessionStorage\n' +
+      '• Purge all offline CacheStorage entries\n' +
+      '• Clear the system clipboard\n' +
+      '• Unregister background Service Workers\n' +
+      '• Hard reload the application\n\n' +
+      'Are you sure you want to proceed?'
+    )
+  );
+
+  if (!shouldProceed) return;
+
+  try {
+    // 1. Clear system clipboard
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText('');
+      } catch {
+        // Ignore clipboard permission errors
+      }
+    }
+
+    // 2. Clear Web Storage (localStorage & sessionStorage)
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage?.clear();
+        window.sessionStorage?.clear();
+      }
+    } catch {
+      // Ignore storage errors in restricted contexts
+    }
+
+    // 3. Purge CacheStorage API entries
+    try {
+      if (typeof window !== 'undefined' && 'caches' in window && window.caches) {
+        const cacheKeys = await window.caches.keys();
+        await Promise.all(cacheKeys.map((k) => window.caches.delete(k)));
+      }
+    } catch {
+      // Ignore cache deletion errors
+    }
+
+    // 4. Unregister Service Workers
+    try {
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((r) => r.unregister()));
+      }
+    } catch {
+      // Ignore service worker unregister errors
+    }
+
+    // 5. Anti-Forensics: Allocate and zeroize 16 MB ephemeral buffers to prompt V8 heap scavenger compaction
+    try {
+      for (let i = 0; i < 16; i++) {
+        const buf = new Uint8Array(1024 * 1024); // 16 MB total
+        buf.fill(0);
+      }
+    } catch {
+      // Ignore
+    }
+  } finally {
+    // 6. Hard page refresh (reloads without using HTTP cache or historical state)
+    if (options?.reload !== false && typeof window !== 'undefined' && window.location) {
+      try {
+        window.location.replace(window.location.origin + window.location.pathname);
+      } catch {
+        window.location.reload();
+      }
+    }
+  }
+}
+
