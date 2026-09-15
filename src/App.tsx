@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { KeyManager } from './components/KeyManager.tsx';
 import { FileProcessor } from './components/FileProcessor.tsx';
 import { VerificationPanel } from './components/VerificationPanel.tsx';
+import { DecoyGenerator } from './components/DecoyGenerator.tsx';
 import { PWAInstallButton } from './components/PWAInstallButton.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { SpecModal } from './components/SpecModal.tsx';
@@ -19,6 +20,7 @@ import {
   Eye,
   EyeOff,
   Flame,
+  Ghost,
 } from 'lucide-react';
 
 export default function App() {
@@ -30,7 +32,7 @@ export default function App() {
     layer4AesHex: generateRandomKey(32),
   }));
 
-  const [activeTab, setActiveTab] = useState<'processor' | 'verification'>('processor');
+  const [activeTab, setActiveTab] = useState<'processor' | 'verification' | 'decoy'>('processor');
   const [isSpecModalOpen, setIsSpecModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCloaked, setIsCloaked] = useState(false);
@@ -197,31 +199,47 @@ export default function App() {
 
         {/* Mobile-First Segmented Tab Selection */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-b border-slate-800/80 pb-3">
-          <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-900 border border-slate-800/90 gap-1 w-full sm:w-auto">
+          <div className="grid grid-cols-3 p-1 rounded-xl bg-slate-900 border border-slate-800/90 gap-1 w-full sm:w-auto">
             <button
               id="tab-processor-btn"
               onClick={() => setActiveTab('processor')}
-              className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-semibold transition cursor-pointer ${
+              className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 px-2 sm:px-3 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 activeTab === 'processor'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Shield className="w-3.5 h-3.5 shrink-0" />
-              <span>Encrypt & Decrypt</span>
+              <span className="hidden sm:inline">Encrypt & Decrypt</span>
+              <span className="sm:hidden">Cipher</span>
+            </button>
+
+            <button
+              id="tab-decoy-btn"
+              onClick={() => setActiveTab('decoy')}
+              className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 px-2 sm:px-3 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                activeTab === 'decoy'
+                  ? 'bg-purple-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Ghost className="w-3.5 h-3.5 shrink-0 text-purple-300" />
+              <span className="hidden sm:inline">{isCloaked ? 'Mock Test Data' : 'Decoy Files'}</span>
+              <span className="sm:hidden">{isCloaked ? 'Mock' : 'Decoy'}</span>
             </button>
 
             <button
               id="tab-verification-btn"
               onClick={() => setActiveTab('verification')}
-              className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-semibold transition cursor-pointer ${
+              className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 px-2 sm:px-3 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 activeTab === 'verification'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Terminal className="w-3.5 h-3.5 shrink-0" />
-              <span>NIST / RFC Verify</span>
+              <span className="hidden sm:inline">NIST / RFC Verify</span>
+              <span className="sm:hidden">Verify</span>
             </button>
           </div>
 
@@ -240,6 +258,10 @@ export default function App() {
 
           {/* File Processor Component */}
           <FileProcessor keys={keys} onProcessingChange={setIsProcessing} />
+        </div>
+
+        <div className={activeTab === 'decoy' ? 'space-y-6' : 'hidden'}>
+          <DecoyGenerator isCloaked={isCloaked} />
         </div>
 
         <div className={activeTab === 'verification' ? 'space-y-6' : 'hidden'}>

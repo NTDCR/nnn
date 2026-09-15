@@ -14,6 +14,7 @@ import {
   Download,
   Info,
   EyeOff,
+  Ghost,
 } from 'lucide-react';
 
 interface FileProcessorProps {
@@ -747,6 +748,21 @@ export const FileProcessor: React.FC<FileProcessorProps> = ({ keys, onProcessing
               <option value=".mp4" className="bg-slate-900 text-slate-200">.mp4 (MP4 Video Polyglot - Cloud &amp; Mobile)</option>
             </select>
           </div>
+
+          <button
+            type="button"
+            id="btn-goto-decoy-generator"
+            onClick={() => {
+              const decoyBtn = document.getElementById('tab-decoy-btn');
+              decoyBtn?.click();
+            }}
+            title="Open Decoy & Honeypot Generator to create believable cover files for plausible deniability under duress"
+            className="inline-flex items-center gap-1 bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 rounded-lg px-2.5 py-1 text-[10px] sm:text-[11px] text-purple-300 font-mono transition cursor-pointer"
+          >
+            <Ghost className="w-3 h-3 text-purple-400" />
+            <span>Decoy Files</span>
+          </button>
+
           <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/70 border border-purple-800/60 text-purple-300 font-mono hidden lg:inline-flex items-center gap-1">
             {stealthExtension === '.mp4'
               ? 'MP4 Video Polyglot Active • Displays in Media Players'
